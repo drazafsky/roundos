@@ -1,0 +1,17 @@
+schema: roundos.rui/v1
+application:
+  id: example
+screens:
+  - id: home
+    title: Home
+    layout: form
+    groups:
+      - id: settings
+        widgets:
+          - id: settings.date
+            type: datePicker
+            label: Date
+            value: 40000
+            min: 0
+            max: 20000
+            onCommit: settings.setDate

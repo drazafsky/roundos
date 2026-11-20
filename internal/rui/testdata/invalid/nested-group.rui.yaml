@@ -1,0 +1,15 @@
+schema: roundos.rui/v1
+application:
+  id: example
+screens:
+  - id: home
+    title: Home
+    layout: list
+    groups:
+      - id: outer
+        groups:
+          - id: nested
+            widgets:
+              - id: nested.label
+                type: label
+                label: Hi

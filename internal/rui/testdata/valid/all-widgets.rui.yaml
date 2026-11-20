@@ -1,0 +1,71 @@
+schema: roundos.rui/v1
+application:
+  id: example.rui.gallery
+screens:
+  - id: gallery.root
+    title: "Widget Gallery"
+    layout: list
+    subtitle: "All nine controls"
+    groups:
+      - id: navigation
+        title: General
+        widgets:
+          - id: navigation.button
+            type: button
+            label: Open Settings
+            navigate: gallery.settings
+          - id: navigation.listItem
+            type: listItem
+            label: Detail Screen
+            detail: Supports rotary
+            navigate: gallery.settings
+          - id: navigation.label
+            type: label
+            label: A read-only label
+          - id: navigation.toggle
+            type: toggle
+            label: Notifications
+            checked: { bind: settings.notifications }
+            onChange: settings.setNotifications
+          - id: navigation.progress
+            type: progress
+            label: Sync
+            value: { bind: settings.progress }
+            min: 0
+            max: 100
+  - id: gallery.settings
+    title: Settings
+    layout: form
+    groups:
+      - id: controls
+        title: Adjust values
+        widgets:
+          - id: controls.slider
+            type: slider
+            label: Brightness
+            value: 45
+            min: 0
+            max: 100
+            step: 5
+            onCommit: settings.setBrightness
+          - id: controls.numberPicker
+            type: numberPicker
+            label: Count
+            value: { bind: settings.count }
+            min: 1
+            max: 99
+            step: 1
+            onCommit: settings.setCount
+          - id: controls.timePicker
+            type: timePicker
+            label: Alarm Time
+            value: 480
+            step: 15
+            onCommit: settings.setTime
+          - id: controls.datePicker
+            type: datePicker
+            label: Reminder Date
+            value: 20500
+            min: 0
+            max: 30000
+            onCommit: settings.setDate

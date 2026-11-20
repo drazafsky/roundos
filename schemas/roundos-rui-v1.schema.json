@@ -1,0 +1,535 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roundos.dev/schemas/roundos-rui-v1.schema.json",
+  "title": "RoundOS RUI v1 language schema (structural constraints)",
+  "description": "RUI schema for authoring; additional semantic constraints are enforced by the Go validator in internal/rui/validate. Compiler and SDK runtime are separate milestones.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "application",
+    "screens"
+  ],
+  "properties": {
+    "schema": {
+      "const": "roundos.rui/v1"
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        }
+      }
+    },
+    "screens": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "$ref": "#/$defs/screen"
+      }
+    },
+    "dialogs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/dialog"
+      }
+    }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "properties": {
+        "bind": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        }
+      },
+      "required": [
+        "bind"
+      ],
+      "additionalProperties": false
+    },
+    "stringValue": {
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 240
+        },
+        {
+          "$ref": "#/$defs/binding"
+        }
+      ]
+    },
+    "intValue": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        {
+          "$ref": "#/$defs/binding"
+        }
+      ]
+    },
+    "boolValue": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/$defs/binding"
+        }
+      ]
+    },
+    "screen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "layout",
+        "groups"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "title": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 80
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "layout": {
+          "enum": [
+            "hero_list",
+            "list",
+            "form",
+            "detail"
+          ]
+        },
+        "hero": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 80
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "subtitle": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 240
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "groups": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/group"
+          }
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "widgets"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "title": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 80
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "widgets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/widget"
+          }
+        }
+      }
+    },
+    "widget": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "label"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "type": {
+          "enum": [
+            "button",
+            "toggle",
+            "slider",
+            "listItem",
+            "label",
+            "progress",
+            "numberPicker",
+            "timePicker",
+            "datePicker"
+          ]
+        },
+        "label": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "detail": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 240
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "variant": {
+          "enum": [
+            "primary",
+            "secondary",
+            "tertiary"
+          ]
+        },
+        "value": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": -2147483648,
+              "maximum": 2147483647
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "checked": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "min": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "max": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "wrap": {
+          "type": "boolean"
+        },
+        "visibleWhen": {
+          "$ref": "#/$defs/binding"
+        },
+        "enabledWhen": {
+          "$ref": "#/$defs/binding"
+        },
+        "onPress": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "onChange": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "onCommit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "navigate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "button",
+                  "listItem"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "required": [
+                  "onPress"
+                ],
+                "not": {
+                  "required": [
+                    "navigate"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "navigate"
+                ],
+                "not": {
+                  "required": [
+                    "onPress"
+                  ]
+                }
+              }
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "value"
+                  ]
+                },
+                {
+                  "required": [
+                    "checked"
+                  ]
+                },
+                {
+                  "required": [
+                    "onChange"
+                  ]
+                },
+                {
+                  "required": [
+                    "onCommit"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "toggle"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "checked",
+              "onChange"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "slider",
+                  "numberPicker",
+                  "datePicker"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "value",
+              "min",
+              "max",
+              "onCommit"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "timePicker"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "value",
+              "onCommit"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "progress"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "value",
+              "min",
+              "max"
+            ]
+          }
+        }
+      ]
+    },
+    "dialog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "confirmLabel",
+        "cancelLabel",
+        "onConfirm",
+        "onCancel"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "title": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 80
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "body": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 240
+            },
+            {
+              "$ref": "#/$defs/binding"
+            }
+          ]
+        },
+        "confirmLabel": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "cancelLabel": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "onConfirm": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "onCancel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "destructive": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

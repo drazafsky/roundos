@@ -1,0 +1,14 @@
+schema: roundos.rui/v1
+application:
+  id: example
+screens:
+  - id: home
+    title: Home
+    layout: detail
+    groups:
+      - id: items
+        widgets:
+          - id: items.link
+            type: button
+            label: Unknown
+            navigate: missing.screen

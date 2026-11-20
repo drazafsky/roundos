@@ -1,0 +1,56 @@
+schema: roundos.rui/v1
+application:
+  id: org.roundos.timer
+screens:
+  - id: timer.root
+    title: Timer
+    layout: hero_list
+    hero: { bind: timer.display }
+    subtitle: { bind: timer.status }
+    groups:
+      - id: actions
+        widgets:
+          - id: timer.toggle
+            type: button
+            variant: primary
+            label: { bind: timer.toggleLabel }
+            onPress: timer.toggle
+          - id: timer.durationLink
+            type: button
+            label: Duration
+            navigate: timer.duration
+          - id: timer.progress
+            type: progress
+            label: Remaining
+            value: { bind: timer.progress }
+            min: 0
+            max: 100
+  - id: timer.duration
+    title: Duration
+    layout: form
+    groups:
+      - id: duration
+        title: Set Duration
+        widgets:
+          - id: timer.minutes
+            type: numberPicker
+            label: Minutes
+            value: { bind: timer.minutes }
+            min: 1
+            max: 999
+            step: 1
+            enabledWhen: { bind: timer.stopped }
+            onCommit: timer.setMinutes
+          - id: timer.reset
+            type: button
+            label: Reset to Five
+            onPress: timer.reset
+dialogs:
+  - id: timer.confirmReset
+    title: Reset timer?
+    body: "This will clear the current countdown."
+    confirmLabel: RESET
+    cancelLabel: CANCEL
+    onConfirm: timer.reset
+    onCancel: timer.cancelReset
+    destructive: true

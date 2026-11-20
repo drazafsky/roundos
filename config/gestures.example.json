@@ -1,0 +1,14 @@
+{
+  "max_contacts": 2,
+  "left_back": true,
+  "top_notifications": true,
+  "two_finger_switch": true,
+  "two_finger_launcher": true,
+  "two_finger_vertical_reverse": true,
+  "three_finger_switch": false,
+  "three_finger_launcher": false,
+  "four_finger_switcher": false,
+  "five_finger_app": false,
+  "edge_width_px": 32,
+  "sensitivity": "balanced"
+}

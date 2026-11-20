@@ -1,0 +1,19 @@
+schema: roundos.rui/v1
+application:
+  id: example
+screens:
+  - id: home
+    title: Home
+    layout: list
+    groups:
+      - id: controls
+        widgets:
+          - id: controls.button
+            type: button
+            label: Start
+            onPress: settings.changed
+          - id: controls.toggle
+            type: toggle
+            label: Sound
+            checked: true
+            onChange: settings.changed

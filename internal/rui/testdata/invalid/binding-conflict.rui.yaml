@@ -1,0 +1,15 @@
+schema: roundos.rui/v1
+application:
+  id: example
+screens:
+  - id: home
+    title: { bind: settings.value }
+    layout: list
+    groups:
+      - id: controls
+        widgets:
+          - id: controls.toggle
+            type: toggle
+            label: Enabled
+            checked: { bind: settings.value }
+            onChange: settings.toggle

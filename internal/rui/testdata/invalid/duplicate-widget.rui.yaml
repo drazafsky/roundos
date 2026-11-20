@@ -1,0 +1,16 @@
+schema: roundos.rui/v1
+application:
+  id: example
+screens:
+  - id: home
+    title: Home
+    layout: list
+    groups:
+      - id: info
+        widgets:
+          - id: info.label
+            type: label
+            label: A
+          - id: info.label
+            type: label
+            label: B

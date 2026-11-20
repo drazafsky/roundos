@@ -1,0 +1,32 @@
+[Unit]
+Description=RoundOS 0.5 circular DRM shell
+Documentation=file:/opt/roundos/current/README.md
+After=systemd-udev-trigger.service lightdm.service display-manager.service
+Conflicts=lightdm.service display-manager.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+ConditionPathExists=/opt/roundos/current/bin/roundd
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/roundos/current
+# Optional administrator-controlled hardware flags; never place passwords here.
+Environment=ROUNDOS_DEVICE_ARGS=
+EnvironmentFile=-/etc/roundos/device.env
+ExecStart=/opt/roundos/current/bin/roundd -backend drm -card /dev/dri/card0 -connector DPI-1 -touch auto -app-user roundos-app -app-state-dir /var/lib/roundos/app-data -state-dir /var/lib/roundos/shell-data -clock-exec /opt/roundos/current/bin/round-clock -timer-exec /opt/roundos/current/bin/round-timer -apps-dir /etc/roundos/apps -gesture-config /etc/roundos/gestures.json -metrics-every 60s $ROUNDOS_DEVICE_ARGS
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+schema: roundos.rui/v1
+application:
+  id: example
+screens:
+  - id: home
+    title: Home
+    layout: form
+    groups:
+      - id: settings
+        widgets:
+          - id: settings.time
+            type: timePicker
+            label: Time
+            value: 600
+            step: 7
+            onCommit: settings.setTime

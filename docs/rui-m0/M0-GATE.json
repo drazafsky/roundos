@@ -1,0 +1,60 @@
+{
+  "generated_utc": "2026-11-19T21:35:38.947336+00:00",
+  "host": "PASS_HOST_ONLY",
+  "scenarios": {
+    "idle": {
+      "status": "PENDING",
+      "median_frame_p95_ms": null,
+      "median_input_to_present_p95_ms": null,
+      "frame_timing_points": 0,
+      "input_timing_points": 0,
+      "accepted_runs": 0,
+      "mean_shell_cpu_pct": null,
+      "peak_shell_rss_kib": null,
+      "peak_temperature_c": null
+    },
+    "gallery_flick": {
+      "status": "PENDING",
+      "median_frame_p95_ms": null,
+      "median_input_to_present_p95_ms": null,
+      "frame_timing_points": 0,
+      "input_timing_points": 0,
+      "accepted_runs": 0,
+      "mean_shell_cpu_pct": null,
+      "peak_shell_rss_kib": null,
+      "peak_temperature_c": null
+    },
+    "timer_background": {
+      "status": "PENDING",
+      "median_frame_p95_ms": null,
+      "median_input_to_present_p95_ms": null,
+      "frame_timing_points": 0,
+      "input_timing_points": 0,
+      "accepted_runs": 0,
+      "mean_shell_cpu_pct": null,
+      "peak_shell_rss_kib": null,
+      "peak_temperature_c": null
+    },
+    "wifi_scan": {
+      "status": "PENDING",
+      "median_frame_p95_ms": null,
+      "median_input_to_present_p95_ms": null,
+      "frame_timing_points": 0,
+      "input_timing_points": 0,
+      "accepted_runs": 0,
+      "mean_shell_cpu_pct": null,
+      "peak_shell_rss_kib": null,
+      "peak_temperature_c": null
+    }
+  },
+  "lifecycle": {
+    "installed": "PENDING",
+    "active": "PENDING",
+    "after_reboot": "PENDING",
+    "after_restart": "PENDING",
+    "after_disable": "PENDING",
+    "after_rollback": "PENDING"
+  },
+  "m0_gate": "OPEN",
+  "note": "READY_FOR_HUMAN_REVIEW still requires review of boot, display, behavior and rollback evidence."
+}

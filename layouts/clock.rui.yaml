@@ -1,0 +1,46 @@
+schema: roundos.rui/v1
+application:
+  id: org.roundos.clock
+screens:
+  - id: clock.root
+    title: Clock
+    layout: hero_list
+    hero: { bind: clock.display }
+    subtitle: { bind: clock.caption }
+    groups:
+      - id: actions
+        widgets:
+          - id: clock.editLabel
+            type: button
+            variant: primary
+            label: Edit Label
+            onPress: clock.requestLabelEdit
+          - id: clock.options
+            type: button
+            label: Options
+            navigate: clock.settings
+  - id: clock.settings
+    title: Clock Options
+    layout: form
+    groups:
+      - id: format
+        title: Time Format
+        widgets:
+          - id: clock.use24Hour
+            type: toggle
+            label: 24-hour Clock
+            checked: { bind: clock.use24Hour }
+            onChange: clock.setUse24Hour
+          - id: clock.about
+            type: listItem
+            label: About Clock
+            navigate: clock.about
+  - id: clock.about
+    title: About Clock
+    layout: detail
+    groups:
+      - id: about
+        widgets:
+          - id: clock.description
+            type: label
+            label: RoundOS Local Clock

@@ -147,6 +147,8 @@ def publish(output, release_version, sha):
     if release:
         if release['target_commitish'] != sha or not release['prerelease']:
             raise ValueError('Existing release has different identity or release type')
+        if not {a['name'] for a in release['assets']} <= set(assets):
+            raise ValueError('Existing draft contains unexpected assets')
         if not release['draft']:
             if not commit or {a['name'] for a in release['assets']} != set(assets):
                 raise ValueError('Published release is incomplete')

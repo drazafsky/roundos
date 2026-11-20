@@ -1,7 +1,5 @@
 """Offline package and publishing contract tests; no GitHub or hardware writes."""
-import hashlib
 import importlib.util
-import json
 import os
 from pathlib import Path
 import shutil

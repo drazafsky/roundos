@@ -60,7 +60,7 @@ type Runtime struct {
 	boolActions            map[string]boolSource
 	dialogActions          map[string][2]string
 	dialogID               string
-	dismissedDialogID      string
+	dialogNeedsClear       bool
 	visible, dirty, sealed bool
 }
 
@@ -258,7 +258,7 @@ func (r *Runtime) ShowDialog(id string) error {
 }
 func (r *Runtime) clearDialogLocked() {
 	if r.dialogID != "" {
-		r.dismissedDialogID = r.dialogID
+		r.dialogNeedsClear = true
 	}
 	r.dialogID = ""
 	r.dirty = true
@@ -336,9 +336,9 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 	return true, r.Invalidate()
 }
 
-// Flush evaluates bindings on the application's calling goroutine. A failure
-// leaves the previous published view intact and retries after correction.
-// Concurrent invalidations are retained for the next Flush.
+// Flush evaluates bindings on the application's calling goroutine. Failures
+// retain dirty state for retry; reopening a dismissed dialog can publish a
+// dialog-free transition first. Concurrent invalidations survive this Flush.
 func (r *Runtime) Flush() error {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
@@ -357,10 +357,10 @@ func (r *Runtime) Flush() error {
 		bindings[k] = v
 	}
 	dialog := r.dialogID
-	dismissed := r.dismissedDialogID
+	needsClear := r.dialogNeedsClear
 	r.mu.Unlock()
 	v, err := buildView(r.file, bindings, dialog)
-	if err == nil && dialog != "" && dialog == dismissed {
+	if err == nil && dialog != "" && needsClear {
 		// The v7 shell keeps a dismissed dialog hidden until it sees no dialog
 		// or a different ID. Publish the clear even if a handler immediately
 		// reopens the same declaration, before the client can deduplicate it.
@@ -378,8 +378,8 @@ func (r *Runtime) Flush() error {
 		return err
 	}
 	r.mu.Lock()
-	if r.dismissedDialogID == dismissed {
-		r.dismissedDialogID = ""
+	if needsClear {
+		r.dialogNeedsClear = false
 	}
 	r.mu.Unlock()
 	return nil

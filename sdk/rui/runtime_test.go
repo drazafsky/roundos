@@ -37,11 +37,14 @@ func (c *capture) Publish(v ui.View) error {
 }
 func (c *capture) last() ui.View { c.mu.Lock(); defer c.mu.Unlock(); return c.views[len(c.views)-1] }
 func (c *capture) count() int    { c.mu.Lock(); defer c.mu.Unlock(); return len(c.views) }
-func loadDemo(t *testing.T) ([]byte, *capture, *Runtime) {
+func loadDemo(t *testing.T, extraDialogs ...string) ([]byte, *capture, *Runtime) {
 	t.Helper()
 	data, e := os.ReadFile("../../examples/rui-demo/layout.rui.yaml")
 	if e != nil {
 		t.Fatal(e)
+	}
+	for _, dialog := range extraDialogs {
+		data = append(data, []byte(dialog)...)
 	}
 	encoded, _, e := compile.Compile(data)
 	if e != nil {
@@ -326,6 +329,54 @@ func TestReopenedDialogPublicationRetries(t *testing.T) {
 			before = pub.count()
 			if err := r.Flush(); err != nil || pub.count() != before {
 				t.Fatal("completed dialog transition was repeated")
+			}
+		})
+	}
+}
+
+func TestIntermediateDialogCannotLosePendingClear(t *testing.T) {
+	for _, failedPublish := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failed-intermediate-publication-%t", failedPublish), func(t *testing.T) {
+			_, pub, r := loadDemo(t, `
+  - id: demo.intermediate
+    title: Intermediate dialog
+    confirmLabel: OK
+    cancelLabel: CANCEL
+    onConfirm: demo.confirmReset
+    onCancel: demo.cancelReset
+`)
+			count, enabled, title := 0, true, "Demo"
+			registerDemo(t, r, &count, &enabled, &title)
+			r.Dispatch(app.Event{Type: "visibility", Visible: true})
+			if err := r.ShowDialog("demo.confirmReset"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Dispatch(app.Event{Type: "input", Action: "demo.cancelReset"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.ShowDialog("demo.intermediate"); err != nil {
+				t.Fatal(err)
+			}
+			if failedPublish {
+				pub.fail = true
+				if err := r.Flush(); err == nil {
+					t.Fatal("expected intermediate publication failure")
+				}
+				pub.fail = false
+			}
+			r.HideDialog()
+			if err := r.ShowDialog("demo.confirmReset"); err != nil {
+				t.Fatal(err)
+			}
+			before := pub.count()
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if pub.count() != before+2 || pub.views[before].Dialog != nil || pub.last().Dialog == nil || pub.last().Dialog.ID != "demo.confirmReset" {
+				t.Fatal("intermediate dialog lost the original dismissal transition")
 			}
 		})
 	}

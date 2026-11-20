@@ -4,6 +4,9 @@ Every PR targeting `main` and every push to `main` runs the **CI and prerelease*
 workflow. It checks Go tests, the race detector, DRM-tagged tests, vet, all three
 Python suites, shell syntax, and RUI validation, compilation, previews and bundle
 determinism. Separate jobs build the host DRM backend and the ARMv7 package.
+RUI checks also recompile the M3 demo's embedded bundle byte-for-byte, preview
+it, and build the optional demo for the host and ARMv7. The example stays in
+the source tree and is not installed or included as a managed release app.
 The ARM build runs in emulated 32-bit Debian Trixie with its native compiler and
 libdrm headers; Go is pinned in `.go-version` for both architectures. When
 updating Go, also update its official ARM archive checksum in the Dockerfile.

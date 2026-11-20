@@ -154,7 +154,12 @@ rollback() {
   (cd "$old" && sha256sum -c SHA256SUMS)
   check_startup_protocol "$old"
   active=0
-  if systemctl is-active --quiet "$UNIT";then active=1; systemctl stop "$UNIT";fi
+  service_state=$(systemctl is-active "$UNIT" 2>/dev/null || true)
+  case "$service_state" in
+    active) active=1; systemctl stop "$UNIT";;
+    inactive|failed) :;;
+    *) echo "Cannot roll back while service state is $service_state; wait for startup/shutdown to finish or run roundosctl disable." >&2; return 1;;
+  esac
   ln -s "$old" "$ROOT/.current.new"
   mv -Tf "$ROOT/.current.new" "$ROOT/current"
   ln -s "$current" "$ROOT/.previous.new"

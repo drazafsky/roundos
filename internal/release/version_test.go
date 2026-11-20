@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"roundos/internal/wire"
 )
@@ -42,6 +44,32 @@ func TestManagedUnitSafetyContract(t *testing.T) {
 		if !strings.Contains(unit, item) {
 			t.Errorf("unit missing %s", item)
 		}
+	}
+	settings := map[string]string{}
+	for _, line := range strings.Split(unit, "\n") {
+		if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
+			settings[parts[0]] = parts[1]
+		}
+	}
+	burst, err := strconv.Atoi(settings["StartLimitBurst"])
+	if err != nil || burst < 1 {
+		t.Fatal("invalid restart limit")
+	}
+	duration := func(key string) time.Duration {
+		t.Helper()
+		value := settings[key]
+		if _, err := strconv.Atoi(value); err == nil {
+			value += "s"
+		}
+		d, err := time.ParseDuration(value)
+		if err != nil {
+			t.Fatalf("invalid %s: %v", key, err)
+		}
+		return d
+	}
+	cycle := duration("TimeoutStartSec") + duration("TimeoutStopSec") + duration("RestartSec")
+	if duration("StartLimitIntervalSec") <= time.Duration(burst)*cycle {
+		t.Fatal("restart window permits endless slow startup/shutdown failures")
 	}
 	if strings.Contains(unit, "-touch-invert-y") {
 		t.Fatal("must preserve hardware-validated unmirrored Y mapping")

@@ -124,7 +124,7 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(payload['scenarios']['idle']['status'],'PENDING')
 
 class ReleaseControlSimulation(unittest.TestCase):
-    """Executes a rewritten copy of 0.5.0's *actual* roundosctl.sh. Fake
+    """Executes a rewritten copy of the actual managed roundosctl.sh. Fake
     systemctl and temporary paths guarantee no host service mutations.
     """
     def setUp(self):
@@ -149,8 +149,10 @@ failure=cmd+':'+unit
 if s.get('_fail',{}).get(failure,0)>0:
  s['_fail'][failure]-=1;p.write_text(json.dumps(s));sys.exit(1)
 if cmd=='is-active':
- if unit=='roundos.service' and s.pop('_die_on_check',False):u['active']=False
- print('active' if u['active'] else 'inactive');rc=0 if u['active'] else 3
+ if unit=='roundos.service' and s.pop('_die_on_check',False):
+  u['active']=False;u.pop('active_state',None)
+ state=u.get('active_state','active' if u['active'] else 'inactive')
+ print(state);rc=0 if state in ('active','reloading') else 3
 elif cmd=='is-enabled':
  mode='linked' if u.get('linked') else ('enabled' if u['enabled'] else u.get('mode','disabled'))
  if u.get('runtime') and mode in ('linked','enabled'):mode+='-runtime'
@@ -167,12 +169,13 @@ elif cmd=='link':u.update(linked=True,runtime='--runtime' in a,fragment=a[-1])
 elif cmd=='disable':
  if '--runtime' not in a or u.get('runtime'):u.update(enabled=False,runtime=False)
  if u.get('external'):u['unit_linked']=False
- if '--now' in a:u['active']=False
-elif cmd=='stop':u['active']=False
+ if '--now' in a:u['active']=False;u.pop('active_state',None)
+elif cmd=='stop':u['active']=False;u.pop('active_state',None)
 elif cmd=='start':
  if u.get('external') and not u.get('unit_linked'):
   p.write_text(json.dumps(s));sys.exit(1)
  u['active']=True
+ u.pop('active_state',None)
  if unit=='roundos.service' and s.get('_delayed_exit'):
   s['_die_on_check']=True
 else:rc=99
@@ -407,5 +410,21 @@ p.write_text(json.dumps(s));sys.exit(rc)
         self.assertTrue(state['lightdm.service']['enabled'])
         self.assertFalse(state['lightdm.service']['runtime'])
         self.assertIn(['enable',str(self.fragment)],state['_calls'])
+
+    def test_rollback_refuses_transitional_state_without_changing_links(self):
+        old=self.root/'releases'/'0.4.9'
+        (self.root/'previous').symlink_to(old)
+        for mode in ('activating','deactivating','reloading'):
+            with self.subTest(mode=mode):
+                state=json.loads(self.state.read_text())
+                state['roundos.service']['active_state']=mode
+                count=len(state.get('_calls',[]))
+                self.state.write_text(json.dumps(state))
+                result=self.call('rollback',success=False)
+                self.assertIn('Cannot roll back while service state is',result.stderr)
+                self.assertEqual((self.root/'current').resolve().name,'0.5.0')
+                self.assertEqual((self.root/'previous').resolve().name,'0.4.9')
+                calls=json.loads(self.state.read_text())['_calls'][count:]
+                self.assertFalse(any(call[0] in ('start','stop','enable','disable') for call in calls))
 
 if __name__=='__main__':unittest.main()

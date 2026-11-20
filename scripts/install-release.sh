@@ -29,24 +29,37 @@ case "$actual" in
 esac
 unit=/etc/systemd/system/roundos.service
 if [ -f "$unit" ] && ! cmp -s "$ROOT/systemd/roundos.service" "$unit"; then
-  prior_release=$(readlink -f /opt/roundos/current 2>/dev/null || true)
-  prior_unit=''
-  case "$prior_release" in /opt/roundos/releases/*) prior_unit=$prior_release/roundos.service;; esac
   # Permit a managed template upgrade, including the original unmodified
   # Type=simple unit predating stored templates. Custom unit edits still fail.
   old_hash=$(sha256sum "$unit")
   old_hash=${old_hash%% *}
-  if [ "$old_hash" != 06453b95893557e389483a3e06cac2926717d245f7895ef362d3364531c0285c ] &&
-     { [ -z "$prior_unit" ] || [ -L "$prior_unit" ] || ! cmp -s "$prior_unit" "$unit"; }; then
+  managed_unit=0
+  # Rollback swaps these links but leaves the installed template unchanged.
+  # Recognize either verified snapshot so a later managed upgrade still works.
+  for release_link in current previous; do
+    prior_release=$(readlink -f "/opt/roundos/$release_link" 2>/dev/null || true)
+    case "$prior_release" in
+      /opt/roundos/releases/*)
+        if [ -f "$prior_release/roundos.service" ] && [ ! -L "$prior_release/roundos.service" ] &&
+           [ -f "$prior_release/SHA256SUMS" ] && [ ! -L "$prior_release/SHA256SUMS" ] &&
+           (cd "$prior_release" && grep -E '^[0-9a-f]{64}  roundos[.]service$' SHA256SUMS | sha256sum -c --status -) &&
+           cmp -s "$prior_release/roundos.service" "$unit"; then
+          managed_unit=1
+          break
+        fi;;
+    esac
+  done
+  if [ "$old_hash" != 06453b95893557e389483a3e06cac2926717d245f7895ef362d3364531c0285c ] && [ "$managed_unit" -ne 1 ]; then
     echo "Existing $unit differs; refusing to replace a manually edited unit." >&2
     exit 1
   fi
 fi
 if [ -L "$unit" ]; then echo 'Refusing a symlinked service unit' >&2;exit 1;fi
-if systemctl is-active --quiet roundos.service 2>/dev/null; then
-  echo 'Refusing to change installed release while the RoundOS service is active.' >&2
-  exit 1
-fi
+service_state=$(systemctl is-active roundos.service 2>/dev/null || true)
+case "$service_state" in
+  inactive|failed) :;;
+  *) echo "Refusing to change installed release while the RoundOS service is $service_state (must be inactive or failed)." >&2; exit 1;;
+esac
 if [ -e "$DEST" ] || [ -L "$DEST" ]; then
   echo "Release already installed, refusing overwrite: $DEST" >&2
   exit 1

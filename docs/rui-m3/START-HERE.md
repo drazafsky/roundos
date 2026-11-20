@@ -48,6 +48,7 @@ New APIs:
 - `Invalidate(keys ...string)` is goroutine-safe. Empty keys mean whole-tree invalidation; nonempty keys must match a declared binding. Invalidations received while `Flush` is publishing are retained for another flush.
 - `Flush()` is serialized and safe against overlapping callers, but should run only on the app event loop. Bound getters must produce a **consistent, data-race-free state snapshot**; synchronize application-owned state accessed by worker goroutines. A failed resolve or publish retains dirty state for retry.
 - `ShowDialog(id)`, `HideDialog()` control shell-owned declarative dialogs. Confirm/cancel IPC actions automatically clear the corresponding active dialog before invoking the Go handler.
+  Reopening the same dialog from a handler publishes a dialog-free view first, then the reopened dialog, so the v7 shell resets its dismissed state. A failed publication retains this transition for retry.
 
 ## Critical IPC v7 semantics
 

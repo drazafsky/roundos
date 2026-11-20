@@ -60,6 +60,7 @@ type Runtime struct {
 	boolActions            map[string]boolSource
 	dialogActions          map[string][2]string
 	dialogID               string
+	dismissedDialogID      string
 	visible, dirty, sealed bool
 }
 
@@ -255,7 +256,19 @@ func (r *Runtime) ShowDialog(id string) error {
 	r.dirty = true
 	return nil
 }
-func (r *Runtime) HideDialog() { r.mu.Lock(); r.dialogID = ""; r.dirty = true; r.mu.Unlock() }
+func (r *Runtime) clearDialogLocked() {
+	if r.dialogID != "" {
+		r.dismissedDialogID = r.dialogID
+	}
+	r.dialogID = ""
+	r.dirty = true
+}
+
+func (r *Runtime) HideDialog() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearDialogLocked()
+}
 
 // Dispatch consumes existing SDK input and visibility events without creating
 // another event reader. For v7 toggles, the wire protocol omits checked state:
@@ -292,8 +305,7 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 	bindings := r.bindings
 	// Clear any active dialog when its confirm/cancel action arrives.
 	if acts, exists := r.dialogActions[r.dialogID]; exists && (ev.Action == acts[0] || ev.Action == acts[1]) {
-		r.dialogID = ""
-		r.dirty = true
+		r.clearDialogLocked()
 	}
 	r.mu.Unlock()
 	var err error
@@ -345,8 +357,17 @@ func (r *Runtime) Flush() error {
 		bindings[k] = v
 	}
 	dialog := r.dialogID
+	dismissed := r.dismissedDialogID
 	r.mu.Unlock()
 	v, err := buildView(r.file, bindings, dialog)
+	if err == nil && dialog != "" && dialog == dismissed {
+		// The v7 shell keeps a dismissed dialog hidden until it sees no dialog
+		// or a different ID. Publish the clear even if a handler immediately
+		// reopens the same declaration, before the client can deduplicate it.
+		cleared := v
+		cleared.Dialog = nil
+		err = r.publisher.Publish(cleared)
+	}
 	if err == nil {
 		err = r.publisher.Publish(v)
 	}
@@ -356,5 +377,10 @@ func (r *Runtime) Flush() error {
 		r.mu.Unlock()
 		return err
 	}
+	r.mu.Lock()
+	if r.dismissedDialogID == dismissed {
+		r.dismissedDialogID = ""
+	}
+	r.mu.Unlock()
 	return nil
 }

@@ -292,6 +292,45 @@ func TestErrorRecoveryBoundsAndConcurrentInvalidation(t *testing.T) {
 		t.Fatalf("lost invalidation: before=%d after=%d", before, after)
 	}
 }
+
+func TestReopenedDialogPublicationRetries(t *testing.T) {
+	for _, failAt := range []int{1, 2} {
+		t.Run(fmt.Sprintf("publication-%d", failAt), func(t *testing.T) {
+			_, pub, r := loadDemo(t)
+			count, enabled, title := 0, true, "Demo"
+			registerDemo(t, r, &count, &enabled, &title)
+			r.Dispatch(app.Event{Type: "visibility", Visible: true})
+			if err := r.ShowDialog("demo.confirmReset"); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			r.HideDialog()
+			if err := r.ShowDialog("demo.confirmReset"); err != nil {
+				t.Fatal(err)
+			}
+			attempts := 0
+			pub.before = func() { attempts++; pub.fail = attempts == failAt }
+			if err := r.Flush(); err == nil {
+				t.Fatal("expected dialog transition publication failure")
+			}
+			pub.before, pub.fail = nil, false
+			before := pub.count()
+			if err := r.Flush(); err != nil {
+				t.Fatalf("retry failed: %v", err)
+			}
+			if pub.count() != before+2 || pub.views[before].Dialog != nil || pub.last().Dialog == nil {
+				t.Fatal("retry did not clear and reopen the dialog")
+			}
+			before = pub.count()
+			if err := r.Flush(); err != nil || pub.count() != before {
+				t.Fatal("completed dialog transition was repeated")
+			}
+		})
+	}
+}
+
 func TestCompiledTreeMatchesPreviewGeometry(t *testing.T) {
 	_, pub, r := loadDemo(t)
 	n := 9

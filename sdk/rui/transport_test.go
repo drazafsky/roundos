@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"roundos/internal/appmgr"
 	"roundos/internal/rui/compile"
+	"roundos/internal/shell"
 	"roundos/internal/wire"
 	"roundos/sdk/app"
 	"roundos/sdk/rui"
@@ -78,6 +80,74 @@ func TestLiveV7SDKClientIntegration(t *testing.T) {
 			results <- errProtocol("incorrect state update over v7")
 			return
 		}
+		model := shell.New()
+		model.SetInstalledApps([]appmgr.AppSpec{{ID: "org.example.rui.demo", Name: "RUI Demo", Icon: "RUI"}})
+		model.SetView("org.example.rui.demo", *msg.View)
+		model.Select(model.PageForApp("org.example.rui.demo"))
+		readView := func() (*wire.View, error) {
+			message, err := wire.Read(conn)
+			if err != nil {
+				return nil, err
+			}
+			if message.Type != "view" || message.View == nil {
+				return nil, errProtocol("dialog transition requires a full view")
+			}
+			model.SetView("org.example.rui.demo", *message.View)
+			return message.View, nil
+		}
+		if e = wire.Write(conn, wire.Message{Version: 7, Type: "input", Action: "demo.requestReset"}); e != nil {
+			results <- e
+			return
+		}
+		view, e := readView()
+		if e != nil {
+			results <- e
+			return
+		}
+		if view.Dialog == nil || model.DialogHidden {
+			results <- errProtocol("initial dialog is not visible")
+			return
+		}
+		// Both cancel and confirm handlers reopen the same declaration. The
+		// third dismissal closes it. Drive real shell input and inspect the
+		// genuine SDK wire frames, including its unchanged-view suppression.
+		for i, action := range []string{"demo.cancelReset", "demo.confirmReset", "demo.cancelReset"} {
+			if action == "demo.confirmReset" {
+				model.Rotate(1)
+			} else {
+				model.Rotate(-1)
+			}
+			model.Activate()
+			id, pending := model.TakeDialogAction()
+			if id != "org.example.rui.demo" || pending != action || !model.DialogHidden {
+				results <- errProtocol("reopened dialog could not be dismissed in the shell")
+				return
+			}
+			if e = wire.Write(conn, wire.Message{Version: 7, Type: "input", Action: pending}); e != nil {
+				results <- e
+				return
+			}
+			view, e = readView()
+			if e != nil {
+				results <- e
+				return
+			}
+			if view.Dialog != nil {
+				results <- errProtocol("dialog-free transition was not published")
+				return
+			}
+			if i < 2 {
+				view, e = readView()
+				if e != nil {
+					results <- e
+					return
+				}
+				if view.Dialog == nil || view.Dialog.ID != "demo.confirmReset" || model.DialogHidden {
+					results <- errProtocol("same-ID dialog stayed hidden after reopening")
+					return
+				}
+			}
+		}
 		results <- nil
 	}()
 	client, e := app.Connect()
@@ -92,6 +162,7 @@ func TestLiveV7SDKClientIntegration(t *testing.T) {
 	count := 0
 	enabled := true
 	title := "ok"
+	cancels := 0
 	bind := []func() error{
 		func() error { return r.BindString("demo.display", func() string { return string(rune('0' + count)) }) },
 		func() error { return r.BindString("demo.subtitle", func() string { return title }) },
@@ -104,13 +175,19 @@ func TestLiveV7SDKClientIntegration(t *testing.T) {
 			return r.OnAction("demo.editTitle", func(context.Context, rui.ActionEvent) error { return nil })
 		},
 		func() error {
-			return r.OnAction("demo.requestReset", func(context.Context, rui.ActionEvent) error { return nil })
+			return r.OnAction("demo.requestReset", func(context.Context, rui.ActionEvent) error { return r.ShowDialog("demo.confirmReset") })
 		},
 		func() error {
-			return r.OnAction("demo.confirmReset", func(context.Context, rui.ActionEvent) error { return nil })
+			return r.OnAction("demo.confirmReset", func(context.Context, rui.ActionEvent) error { return r.ShowDialog("demo.confirmReset") })
 		},
 		func() error {
-			return r.OnAction("demo.cancelReset", func(context.Context, rui.ActionEvent) error { return nil })
+			return r.OnAction("demo.cancelReset", func(context.Context, rui.ActionEvent) error {
+				cancels++
+				if cancels == 1 {
+					return r.ShowDialog("demo.confirmReset")
+				}
+				return nil
+			})
 		},
 		func() error { return r.OnInt("demo.setCount", func(context.Context, int) error { return nil }) },
 		func() error { return r.OnBool("demo.setEnabled", func(context.Context, bool) error { return nil }) },
@@ -123,7 +200,7 @@ func TestLiveV7SDKClientIntegration(t *testing.T) {
 	if e := r.ValidateBindings(); e != nil {
 		t.Fatal(e)
 	}
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 6; i++ {
 		select {
 		case ev, ok := <-client.Events():
 			if !ok {

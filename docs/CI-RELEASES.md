@@ -58,8 +58,9 @@ Automation sets `ROUNDOS_VERSION`, `ROUNDOS_BUILD_ID`, and `ROUNDOS_OUTPUT_DIR`.
 
 The `main` ruleset requires **Tests**, **Host DRM build**, and **ARMv7 build and
 package**, an up-to-date branch, a PR, and resolved review conversations.
-The completed Copilot check is also required. Open-issue references, assignment,
-and review feedback resolution still follow `AGENTS.md`.
+Copilot review completion, open-issue references, assignment, and review feedback
+resolution follow `AGENTS.md`. GitHub excludes its internal Copilot check from
+required status checks, so verify the submitted Copilot review before merging.
 Squash merging and automatic branch deletion are enabled in repository settings.
 
 CI never marks physical display, touch, Wi-Fi, managed boot, recovery or

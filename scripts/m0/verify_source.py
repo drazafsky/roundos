@@ -2,7 +2,7 @@
 """Verify unchanged RoundOS 0.5.0 inputs for additive RUI milestone branches.
 
 Checks every original file against the immutable 0.5.0 archive manifest.
-Approved M0/M1/M2 additions are allowed, but a missing/modified baseline file fails.
+Approved M0/M1/M2/M3 additions are allowed, but a missing/modified baseline file fails.
 """
 import argparse
 import hashlib
@@ -57,7 +57,8 @@ def verify(root=ROOT, manifest=MANIFEST, archive=None):
         allowed = ('scripts/m0/', 'docs/rui-m0/',
                    'internal/rui/', 'sdk/rui/', 'schemas/',
                    'docs/rui-m1/', 'scripts/m1/', 'layouts/',
-                   'cmd/roundui/', 'docs/rui-m2/', 'scripts/m2/')
+                   'cmd/roundui/', 'docs/rui-m2/', 'scripts/m2/',
+                   'docs/rui-m3/', 'scripts/m3/', 'examples/rui-demo/')
         if not any(rel.startswith(prefix) for prefix in allowed):
             extras.append(rel)
     errors.extend('UNEXPECTED ' + rel for rel in extras)

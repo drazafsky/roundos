@@ -1,0 +1,57 @@
+schema: roundos.rui/v1
+application:
+  id: org.example.rui.demo
+screens:
+  - id: demo.root
+    title: RUI Demo
+    layout: hero_list
+    hero: { bind: demo.display }
+    subtitle: { bind: demo.subtitle }
+    groups:
+      - id: actions
+        widgets:
+          - id: demo.increment
+            type: button
+            variant: primary
+            label: Add One
+            onPress: demo.increment
+          - id: demo.editor
+            type: button
+            label: Edit Title
+            onPress: demo.editTitle
+          - id: demo.settingsLink
+            type: listItem
+            label: Settings
+            detail: Rotary and touch
+            navigate: demo.settings
+  - id: demo.settings
+    title: Demo Settings
+    layout: form
+    groups:
+      - id: controls
+        widgets:
+          - id: demo.enabled
+            type: toggle
+            label: Allow Counting
+            checked: { bind: demo.enabled }
+            onChange: demo.setEnabled
+          - id: demo.count
+            type: numberPicker
+            label: Count
+            value: { bind: demo.count }
+            min: 0
+            max: 99
+            onCommit: demo.setCount
+          - id: demo.reset
+            type: button
+            label: Reset
+            onPress: demo.requestReset
+dialogs:
+  - id: demo.confirmReset
+    title: Reset count?
+    body: Return count to zero
+    confirmLabel: RESET
+    cancelLabel: KEEP
+    onConfirm: demo.confirmReset
+    onCancel: demo.cancelReset
+    destructive: true

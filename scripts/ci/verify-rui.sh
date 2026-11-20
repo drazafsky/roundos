@@ -15,3 +15,13 @@ for layout in layouts/*.rui.yaml; do
   "$work/roundui" compile -o "$work/$name-again.rui.bin" "$layout"
   cmp "$work/$name.rui.bin" "$work/$name-again.rui.bin"
 done
+
+# M3 is an opt-in SDK example. Verify its checked-in embedded bundle and both
+# build targets without installing the demo or starting a shell/service.
+"$work/roundui" validate examples/rui-demo/layout.rui.yaml
+"$work/roundui" compile -o "$work/demo.rui.bin" examples/rui-demo/layout.rui.yaml
+cmp "$work/demo.rui.bin" examples/rui-demo/layout.rui.bin
+"$work/roundui" inspect "$work/demo.rui.bin"
+"$work/roundui" preview -o "$work/demo.png" "$work/demo.rui.bin"
+go build -o "$work/round-rui-demo" ./examples/rui-demo
+GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o "$work/round-rui-demo-armv7" ./examples/rui-demo

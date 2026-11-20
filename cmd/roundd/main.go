@@ -355,7 +355,7 @@ func main() {
 		}
 	}
 	go stdinCommands(ctx, actions)
-	log.Printf("RoundOS 0.5.0 release: %s, %s. SSH: l/r/p/b/h/c/t/w/g/k/n/e/z/na/nq/nc/a/x/s/q + Enter", *card, *connector)
+	log.Printf("RoundOS %s release: %s, %s. SSH: l/r/p/b/h/c/t/w/g/k/n/e/z/na/nq/nc/a/x/s/q + Enter", release.Version, *card, *connector)
 	// Rendering/DRM page flips run on a separate goroutine. Input and gesture
 	// processing never wait for the display's ~16.7 ms refresh interval.
 	// A capacity-one mailbox always retains the newest immutable UI snapshot.

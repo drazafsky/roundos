@@ -53,3 +53,7 @@ See [docs/SDK-APPS.md](docs/SDK-APPS.md) for the IPC v7 Go SDK, [docs/SECURITY-0
 
 Follow the [repository rules](AGENTS.md) for issue tracking, Copilot review,
 comment resolution, and squash merging with branch deletion.
+
+Every PR runs automated tests and builds. Successful merges to `main` publish
+installable ARMv7 development prereleases. See [CI and releases](docs/CI-RELEASES.md)
+for checks, downloads, installation, and the separate physical Pi acceptance gate.

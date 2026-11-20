@@ -24,9 +24,22 @@ host_verify=module('m0_host_verify','scripts/m0/verify_host.py')
 
 class SourceTests(unittest.TestCase):
     def test_manifest_covers_original_release(self):
-        n,issues=source.verify()
-        self.assertEqual(n,149)
-        self.assertEqual(issues,[])
+        # The immutable archive describes the historical release, not HEAD.
+        rows=source.MANIFEST.read_text().splitlines()
+        self.assertEqual(len(rows),149)
+        self.assertEqual(len({row.split('  ',1)[1] for row in rows}),149)
+        self.assertTrue(all(len(row.split('  ',1)[0])==64 for row in rows))
+
+    def test_accepts_unchanged_archive_fixture(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            content=b'original release source\n'
+            (root/'go.mod').write_bytes(content)
+            manifest=root/'scripts/m0/original.sha'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(hashlib.sha256(content).hexdigest()+'  go.mod\n')
+            self.assertEqual(source.verify(root,manifest),(1,[]))
 
     def test_detects_modification(self):
         with tempfile.TemporaryDirectory() as tmp:

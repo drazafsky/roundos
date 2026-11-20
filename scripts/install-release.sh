@@ -8,7 +8,12 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
-VERSION=0.5.0
+if [ ! -f "$ROOT/RELEASE_VERSION" ] || [ -L "$ROOT/RELEASE_VERSION" ]; then
+  echo 'Missing or untrusted RELEASE_VERSION; run ./scripts/build.sh first' >&2
+  exit 1
+fi
+VERSION=$(cat "$ROOT/RELEASE_VERSION")
+case "$VERSION" in ''|*[!0-9A-Za-z.+-]*|[!0-9]*) echo 'Invalid release version' >&2; exit 1;; esac
 RELEASES=/opt/roundos/releases
 DEST=$RELEASES/$VERSION
 for bin in roundd round-clock round-timer; do
@@ -17,9 +22,9 @@ for bin in roundd round-clock round-timer; do
     exit 1
   fi
 done
-actual=$($ROOT/roundd -version)
+actual=$("$ROOT/roundd" -version)
 case "$actual" in
-  'RoundOS 0.5.0 '*) : ;;
+  "RoundOS $VERSION ("*")") : ;;
   *) echo "Wrong roundd build: $actual" >&2; exit 1;;
 esac
 unit=/etc/systemd/system/roundos.service

@@ -71,6 +71,9 @@ func main() {
 			log.Printf("clock publish: %v", err)
 		}
 	}
+	// Publish initialization once even while hidden so managed startup can
+	// verify the built-in app is ready without changing foreground selection.
+	publish()
 	defer stop()
 	for {
 		select {

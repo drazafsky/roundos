@@ -16,7 +16,12 @@ class InstallerIdentityTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         (self.root / 'scripts').mkdir()
-        shutil.copyfile(ROOT / 'scripts/install-release.sh', self.root / 'scripts/install-release.sh')
+        script = (ROOT / 'scripts/install-release.sh').read_text()
+        script = script.replace('/etc/systemd/system/roundos.service', str(self.root / 'installed.service'))
+        script = script.replace('/opt/roundos', str(self.root / 'managed'))
+        (self.root / 'scripts/install-release.sh').write_text(script)
+        (self.root / 'systemd').mkdir()
+        shutil.copyfile(ROOT / 'systemd/roundos.service', self.root / 'systemd/roundos.service')
         self.mockbin = self.root / 'mockbin'
         self.mockbin.mkdir()
         self.command('id', 'echo 0')
@@ -61,6 +66,40 @@ class InstallerIdentityTests(unittest.TestCase):
         self.metadata.write_text('../../escape\n')
         result = self.run_installer()
         self.assertIn('Invalid release version', result.stderr)
+
+    def test_original_managed_simple_unit_can_be_upgraded(self):
+        legacy = (ROOT / 'systemd/roundos.service').read_text().replace(
+            'Type=notify\nNotifyAccess=main\nTimeoutStartSec=45s', 'Type=simple')
+        legacy = legacy.replace('StartLimitIntervalSec=300', 'StartLimitIntervalSec=120')
+        (self.root / 'installed.service').write_text(legacy)
+        result = self.run_installer()
+        self.assertIn('Refusing to change installed release while', result.stderr)
+        self.assertNotIn('manually edited unit', result.stderr)
+
+    def test_custom_unit_is_not_overwritten(self):
+        (self.root / 'installed.service').write_text('[Service]\nType=exec\n# local customization\n')
+        result = self.run_installer()
+        self.assertIn('refusing to replace a manually edited unit', result.stderr)
+
+    def test_stored_managed_template_can_be_upgraded(self):
+        installed = '[Service]\nType=notify\n# prior managed template\n'
+        previous = self.root / 'managed/releases/prior'
+        previous.mkdir(parents=True)
+        (previous / 'roundos.service').write_text(installed)
+        (self.root / 'managed/current').symlink_to(previous)
+        (self.root / 'installed.service').write_text(installed)
+        result = self.run_installer()
+        self.assertIn('Refusing to change installed release while', result.stderr)
+
+    def test_symlinked_stored_unit_does_not_authorize_overwrite(self):
+        previous = self.root / 'managed/releases/prior'
+        previous.mkdir(parents=True)
+        installed = self.root / 'installed.service'
+        installed.write_text('[Service]\n# custom\n')
+        (previous / 'roundos.service').symlink_to(installed)
+        (self.root / 'managed/current').symlink_to(previous)
+        result = self.run_installer()
+        self.assertIn('refusing to replace a manually edited unit', result.stderr)
 
 
 if __name__ == '__main__':

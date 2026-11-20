@@ -3,12 +3,14 @@ Description=RoundOS 0.5 circular DRM shell
 Documentation=file:/opt/roundos/current/README.md
 After=systemd-udev-trigger.service lightdm.service display-manager.service
 Conflicts=lightdm.service display-manager.service
-StartLimitIntervalSec=120
+StartLimitIntervalSec=300
 StartLimitBurst=5
 ConditionPathExists=/opt/roundos/current/bin/roundd
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=45s
 User=root
 WorkingDirectory=/opt/roundos/current
 # Optional administrator-controlled hardware flags; never place passwords here.

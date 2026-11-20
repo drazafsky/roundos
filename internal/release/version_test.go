@@ -34,6 +34,7 @@ func TestManagedUnitSafetyContract(t *testing.T) {
 	required := []string{
 		"User=root", "Conflicts=lightdm.service", "WantedBy=multi-user.target",
 		"Restart=on-failure", "StartLimitBurst=5", "NoNewPrivileges=yes", "ProtectHome=yes",
+		"Type=notify", "NotifyAccess=main", "TimeoutStartSec=45s",
 		"-backend drm", "-touch auto", "-app-user roundos-app", "-state-dir /var/lib/roundos/shell-data",
 		"-app-state-dir /var/lib/roundos/app-data", "-apps-dir /etc/roundos/apps", "-metrics-every 60s",
 	}

@@ -29,8 +29,18 @@ case "$actual" in
 esac
 unit=/etc/systemd/system/roundos.service
 if [ -f "$unit" ] && ! cmp -s "$ROOT/systemd/roundos.service" "$unit"; then
-  echo "Existing $unit differs; refusing to replace a manually edited unit." >&2
-  exit 1
+  prior_release=$(readlink -f /opt/roundos/current 2>/dev/null || true)
+  prior_unit=''
+  case "$prior_release" in /opt/roundos/releases/*) prior_unit=$prior_release/roundos.service;; esac
+  # Permit a managed template upgrade, including the original unmodified
+  # Type=simple unit predating stored templates. Custom unit edits still fail.
+  old_hash=$(sha256sum "$unit")
+  old_hash=${old_hash%% *}
+  if [ "$old_hash" != 06453b95893557e389483a3e06cac2926717d245f7895ef362d3364531c0285c ] &&
+     { [ -z "$prior_unit" ] || [ -L "$prior_unit" ] || ! cmp -s "$prior_unit" "$unit"; }; then
+    echo "Existing $unit differs; refusing to replace a manually edited unit." >&2
+    exit 1
+  fi
 fi
 if [ -L "$unit" ]; then echo 'Refusing a symlinked service unit' >&2;exit 1;fi
 if systemctl is-active --quiet roundos.service 2>/dev/null; then
@@ -70,7 +80,8 @@ for bin in roundd round-clock round-timer; do
   install -o root -g root -m 0755 "$ROOT/$bin" "$stage/bin/$bin"
 done
 install -o root -g root -m 0644 "$ROOT/README.md" "$stage/README.md"
-( cd "$stage" && sha256sum bin/roundd bin/round-clock bin/round-timer > SHA256SUMS && sha256sum -c SHA256SUMS )
+install -o root -g root -m 0644 "$ROOT/systemd/roundos.service" "$stage/roundos.service"
+( cd "$stage" && sha256sum bin/roundd bin/round-clock bin/round-timer roundos.service > SHA256SUMS && sha256sum -c SHA256SUMS )
 chmod 0755 "$stage"
 mv -- "$stage" "$DEST"
 stage=''

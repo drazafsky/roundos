@@ -81,6 +81,7 @@ func TestRC4AppPrivilegeSeparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
+	events := newEventInbox(mgr.Events())
 	parentSocketDir := filepath.Dir(mgr.Socket())
 	dirInfo, err := os.Stat(parentSocketDir)
 	if err != nil {
@@ -93,22 +94,8 @@ func TestRC4AppPrivilegeSeparation(t *testing.T) {
 	if dirInfo.Mode().Perm() != 0710 || socketInfo.Mode().Perm() != 0660 {
 		t.Fatalf("isolated socket permissions unsafe: directory=%#o socket=%#o", dirInfo.Mode().Perm(), socketInfo.Mode().Perm())
 	}
-	connected := map[string]bool{}
-	timeout := time.NewTimer(8 * time.Second)
-	defer timeout.Stop()
-	for len(connected) < 2 {
-		select {
-		case ev := <-mgr.Events():
-			if ev.Kind == "error" {
-				t.Fatalf("unprivileged child failed to start: %s: %s", ev.App, ev.Detail)
-			}
-			if ev.Kind == "connected" {
-				connected[ev.App] = true
-			}
-		case <-timeout.C:
-			t.Fatalf("unprivileged apps failed IPC handshake: %v", connected)
-		}
-	}
+	get(t, events, wire.ClockID, "connected", 8*time.Second)
+	get(t, events, wire.TimerID, "connected", 8*time.Second)
 	for id, pid := range mgr.PIDs() {
 		status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 		if err != nil {
@@ -138,11 +125,11 @@ func TestRC4AppPrivilegeSeparation(t *testing.T) {
 	if err = mgr.SetForeground(wire.TimerID); err != nil {
 		t.Fatal(err)
 	}
-	get(t, mgr.Events(), wire.TimerID, "view", 5*time.Second)
+	get(t, events, wire.TimerID, "view", 5*time.Second)
 	if !mgr.Input(wire.TimerID, "toggle", 0) {
 		t.Fatal("cannot send timer toggle")
 	}
-	get(t, mgr.Events(), wire.TimerID, "view", 5*time.Second)
+	get(t, events, wire.TimerID, "view", 5*time.Second)
 	timerState := filepath.Join(state, "timer.json")
 	var st os.FileInfo
 	for i := 0; i < 20; i++ {

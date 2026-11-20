@@ -141,15 +141,30 @@ class ReleaseControlSimulation(unittest.TestCase):
 import json,os,sys
 from pathlib import Path
 p=Path(os.environ['M0_FAKE_SYSTEMCTL_STATE']);s=json.loads(p.read_text())
-a=sys.argv[1:];cmd=a[0];unit=a[-1];u=s[unit];rc=0
+a=sys.argv[1:];cmd=a[0];unit='lightdm.service' if cmd=='link' else a[-1];u=s[unit];rc=0
+s.setdefault('_calls',[]).append(a)
+failure=cmd+':'+unit
+if s.get('_fail',{}).get(failure,0)>0:
+ s['_fail'][failure]-=1;p.write_text(json.dumps(s));sys.exit(1)
 if cmd=='is-active':
+ if unit=='roundos.service' and s.pop('_die_on_check',False):u['active']=False
  print('active' if u['active'] else 'inactive');rc=0 if u['active'] else 3
 elif cmd=='is-enabled':
- print('enabled' if u['enabled'] else 'disabled');rc=0 if u['enabled'] else 1
-elif cmd=='enable':u['enabled']=True
-elif cmd=='disable':u['enabled']=False;u['active']=False if '--now' in a else u['active']
+ mode='linked' if u.get('linked') else ('enabled' if u['enabled'] else u.get('mode','disabled'))
+ if u.get('runtime') and mode in ('linked','enabled'):mode+='-runtime'
+ print(mode);rc=0 if u['enabled'] else 1
+elif cmd=='show':
+ print(s.get('_unit_type','notify') if '--property=Type' in a else u['fragment'])
+elif cmd=='enable':u.update(enabled=True,runtime='--runtime' in a)
+elif cmd=='link':u.update(linked=True,runtime='--runtime' in a,fragment=a[-1])
+elif cmd=='disable':
+ if '--runtime' not in a or u.get('runtime'):u.update(enabled=False,runtime=False)
+ if '--now' in a:u['active']=False
 elif cmd=='stop':u['active']=False
-elif cmd=='start':u['active']=True
+elif cmd=='start':
+ u['active']=True
+ if unit=='roundos.service' and s.get('_delayed_exit'):
+  s['_die_on_check']=True
 else:rc=99
 p.write_text(json.dumps(s));sys.exit(rc)
 ''')
@@ -166,16 +181,19 @@ p.write_text(json.dumps(s));sys.exit(rc)
                         PATH=str(self.bin)+os.pathsep+self.env.get('PATH',''))
         for version in ('0.5.0','0.4.9'):
             d=self.root/'releases'/version/'bin';d.mkdir(parents=True)
-            program=d/'roundd';program.write_text('#!/bin/sh\necho "RoundOS '+version+'"\n');program.chmod(0o755)
+            program=d/'roundd';program.write_text('#!/bin/sh\nif [ "$1" = -startup-protocol ]; then echo sd-notify-v1; else echo "RoundOS '+version+'"; fi\n');program.chmod(0o755)
             result=subprocess.run(['sha256sum','bin/roundd'],cwd=d.parent,capture_output=True,text=True,check=True)
             (d.parent/'SHA256SUMS').write_text(result.stdout)
         (self.root/'current').symlink_to(self.root/'releases'/'0.5.0')
 
-    def call(self,action):
+    def call(self,action,success=True):
         # Mock systemctl launches several Python subprocesses; allow loaded CI hosts
         # enough startup time while still detecting a hung release script.
         r=subprocess.run(['sh',str(self.script),action],env=self.env,capture_output=True,text=True,timeout=20)
-        self.assertEqual(r.returncode,0,action+' '+r.stdout+' '+r.stderr)
+        if success:
+            self.assertEqual(r.returncode,0,action+' '+r.stdout+' '+r.stderr)
+        else:
+            self.assertNotEqual(r.returncode,0,action+' '+r.stdout+' '+r.stderr)
         return r
 
     def test_activate_verify_disable_restores_desktop(self):
@@ -207,5 +225,111 @@ p.write_text(json.dumps(s));sys.exit(rc)
         state=json.loads(self.state.read_text())
         self.assertFalse(state['roundos.service']['active'])
         self.assertTrue(state['lightdm.service']['active'])
+
+    def change_state(self,**values):
+        state=json.loads(self.state.read_text());state.update(values)
+        self.state.write_text(json.dumps(state))
+
+    def test_runtime_only_enablement_is_not_made_persistent(self):
+        state=json.loads(self.state.read_text())
+        state['lightdm.service']['runtime']=True
+        self.state.write_text(json.dumps(state))
+        self.call('activate');self.call('disable')
+        state=json.loads(self.state.read_text())
+        self.assertTrue(state['lightdm.service']['enabled'])
+        self.assertTrue(state['lightdm.service']['runtime'])
+        self.assertIn(['disable','--runtime','lightdm.service'],state['_calls'])
+        self.assertIn(['enable','--runtime','lightdm.service'],state['_calls'])
+
+    def test_linked_runtime_unit_is_restored_without_enabling(self):
+        fragment=self.base/'lightdm.service';fragment.write_text('[Service]\n')
+        state=json.loads(self.state.read_text())
+        state['lightdm.service'].update(enabled=False,linked=True,runtime=True,fragment=str(fragment))
+        self.state.write_text(json.dumps(state))
+        self.call('activate');self.call('disable')
+        state=json.loads(self.state.read_text())
+        self.assertFalse(state['lightdm.service']['enabled'])
+        self.assertTrue(state['lightdm.service']['runtime'])
+        self.assertIn(['link','--runtime',str(fragment)],state['_calls'])
+
+    def test_disabled_desktop_is_started_without_enabling(self):
+        state=json.loads(self.state.read_text());state['lightdm.service']['enabled']=False
+        self.state.write_text(json.dumps(state))
+        self.call('activate');self.call('disable')
+        state=json.loads(self.state.read_text())
+        self.assertTrue(state['lightdm.service']['active'])
+        self.assertFalse(state['lightdm.service']['enabled'])
+
+    def test_restore_start_failure_keeps_stamp_and_retry_succeeds(self):
+        self.call('activate')
+        self.change_state(_fail={'start:lightdm.service':1})
+        result=self.call('disable',success=False)
+        self.assertIn('recovery record retained',result.stderr)
+        self.assertTrue((self.base/'desktop-stamp').exists())
+        self.assertNotIn('prior recorded desktop state restored',result.stdout)
+        self.call('disable')
+        self.assertFalse((self.base/'desktop-stamp').exists())
+        self.assertTrue(json.loads(self.state.read_text())['lightdm.service']['active'])
+
+    def test_restore_enable_failure_keeps_stamp_and_retry_succeeds(self):
+        self.call('activate')
+        self.change_state(_fail={'enable:lightdm.service':1})
+        self.call('disable',success=False)
+        self.assertTrue((self.base/'desktop-stamp').exists())
+        self.call('disable')
+        self.assertFalse((self.base/'desktop-stamp').exists())
+
+    def test_activation_readiness_failure_restores_desktop_and_disables_restarts(self):
+        self.change_state(_fail={'start:roundos.service':1})
+        self.call('activate',success=False)
+        state=json.loads(self.state.read_text())
+        self.assertFalse(state['roundos.service']['active'])
+        self.assertFalse(state['roundos.service']['enabled'])
+        self.assertTrue(state['lightdm.service']['active'])
+        self.assertTrue(state['lightdm.service']['enabled'])
+
+    def test_exit_immediately_after_start_is_not_reported_as_ready(self):
+        self.change_state(_delayed_exit=True)
+        result=self.call('activate',success=False)
+        self.assertNotIn('RoundOS ready',result.stdout)
+        self.assertTrue(json.loads(self.state.read_text())['lightdm.service']['active'])
+
+    def test_rollback_readiness_failure_restores_desktop(self):
+        (self.root/'previous').symlink_to(self.root/'releases'/'0.4.9')
+        self.call('activate')
+        self.change_state(_fail={'start:roundos.service':1})
+        self.call('rollback',success=False)
+        state=json.loads(self.state.read_text())
+        self.assertFalse(state['roundos.service']['active'])
+        self.assertFalse(state['roundos.service']['enabled'])
+        self.assertTrue(state['lightdm.service']['active'])
+
+    def test_rollback_failure_retains_stamp_when_desktop_restore_fails(self):
+        (self.root/'previous').symlink_to(self.root/'releases'/'0.4.9')
+        self.call('activate')
+        self.change_state(_fail={'start:roundos.service':1,'start:lightdm.service':1})
+        self.call('rollback',success=False)
+        self.assertTrue((self.base/'desktop-stamp').exists())
+        self.call('disable')
+        self.assertFalse((self.base/'desktop-stamp').exists())
+
+    def test_legacy_rollback_is_rejected_before_stopping_current_release(self):
+        old=self.root/'releases'/'0.4.9'
+        (old/'bin/roundd').write_text('#!/bin/sh\necho old-version\n')
+        result=subprocess.run(['sha256sum','bin/roundd'],cwd=old,capture_output=True,text=True,check=True)
+        (old/'SHA256SUMS').write_text(result.stdout)
+        (self.root/'previous').symlink_to(old)
+        self.call('activate')
+        result=self.call('rollback',success=False)
+        self.assertIn('lacks managed readiness support',result.stderr)
+        self.assertEqual((self.root/'current').resolve().name,'0.5.0')
+        self.assertTrue(json.loads(self.state.read_text())['roundos.service']['active'])
+
+    def test_old_simple_unit_rejected_before_desktop_switch(self):
+        self.change_state(_unit_type='simple')
+        self.call('activate',success=False)
+        state=json.loads(self.state.read_text())
+        self.assertTrue(state['lightdm.service']['active'])
+        self.assertFalse(state['roundos.service']['enabled'])
 
 if __name__=='__main__':unittest.main()

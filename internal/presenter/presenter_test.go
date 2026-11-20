@@ -1,6 +1,7 @@
 package presenter
 
 import (
+	"errors"
 	"image"
 	"sync"
 	"testing"
@@ -40,6 +41,11 @@ func TestInputCannotBlockOnBusyDRM(t *testing.T) {
 		p.Close()
 		t.Fatal("render never started")
 	}
+	select {
+	case <-p.FirstFrame():
+		t.Fatal("reported presentation before DRM completed")
+	default:
+	}
 	// The first frame is deliberately stuck in DRM. A new touch/input event
 	// must never wait for it, and the mailbox must not accumulate old images.
 	began := time.Now()
@@ -52,6 +58,11 @@ func TestInputCannotBlockOnBusyDRM(t *testing.T) {
 		t.Errorf("input blocked behind page flip: %v", elapsed)
 	}
 	close(d.gate)
+	select {
+	case <-p.FirstFrame():
+	case <-time.After(time.Second):
+		t.Error("successful frame did not signal readiness")
+	}
 	// Both the initial frame and at most one pending latest frame are shown.
 	deadline := time.Now().Add(time.Second)
 	for d.Count() < 2 && time.Now().Before(deadline) {
@@ -60,6 +71,26 @@ func TestInputCannotBlockOnBusyDRM(t *testing.T) {
 	p.Close()
 	if got := d.Count(); got != 2 {
 		t.Fatalf("expected coalesced frames, got %d", got)
+	}
+}
+
+type failedDisplay struct{}
+
+func (failedDisplay) Present(*image.RGBA) error { return errors.New("DRM failed") }
+
+func TestFailedPresentationNeverSignalsReadiness(t *testing.T) {
+	p := New(failedDisplay{}, perf.New())
+	defer p.Close()
+	p.Submit(shell.New(), time.Time{})
+	select {
+	case <-p.Errors():
+	case <-time.After(time.Second):
+		t.Fatal("missing presenter failure")
+	}
+	select {
+	case <-p.FirstFrame():
+		t.Fatal("failed display reported ready")
+	default:
 	}
 }
 

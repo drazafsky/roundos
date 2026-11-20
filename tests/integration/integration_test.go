@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"roundos/internal/appmgr"
+	"roundos/internal/timerstate"
 	"roundos/internal/wire"
 )
 
@@ -44,6 +46,16 @@ func get(t *testing.T, inbox *eventInbox, app, kind string, timeout time.Duratio
 	for {
 		select {
 		case ev := <-inbox.events:
+			switch ev.Kind {
+			case "connected", "disconnected", "error", "stopped":
+				kept := inbox.pending[:0]
+				for _, pending := range inbox.pending {
+					if pending.App != ev.App || pending.Kind != "view" {
+						kept = append(kept, pending)
+					}
+				}
+				inbox.pending = kept
+			}
 			if ev.App == app && ev.Kind == kind {
 				return ev
 			}
@@ -55,6 +67,56 @@ func get(t *testing.T, inbox *eventInbox, app, kind string, timeout time.Duratio
 		}
 	}
 }
+
+func TestInboxDiscardsViewsFromBeforeRestart(t *testing.T) {
+	channel := make(chan appmgr.Event, 4)
+	inbox := newEventInbox(channel)
+	inbox.pending = []appmgr.Event{
+		{App: wire.TimerID, Kind: "view", Detail: "stale"},
+		{App: wire.ClockID, Kind: "view", Detail: "keep"},
+	}
+	channel <- appmgr.Event{App: wire.TimerID, Kind: "view", Detail: "in flight before crash"}
+	channel <- appmgr.Event{App: wire.TimerID, Kind: "error"}
+	channel <- appmgr.Event{App: wire.TimerID, Kind: "connected"}
+	channel <- appmgr.Event{App: wire.TimerID, Kind: "view", Detail: "recovered"}
+	get(t, inbox, wire.TimerID, "error", time.Second)
+	get(t, inbox, wire.TimerID, "connected", time.Second)
+	if event := get(t, inbox, wire.TimerID, "view", time.Second); event.Detail != "recovered" {
+		t.Fatalf("old app generation satisfied recovery: %+v", event)
+	}
+	if event := get(t, inbox, wire.ClockID, "view", time.Second); event.Detail != "keep" {
+		t.Fatal("unrelated startup view was lost")
+	}
+}
+
+func timerViewAtDeadline(t *testing.T, inbox *eventInbox, deadline time.Time) appmgr.Event {
+	t.Helper()
+	until := time.Now().Add(5 * time.Second)
+	for {
+		event := get(t, inbox, wire.TimerID, "view", time.Until(until))
+		var minutes, seconds int
+		if n, err := fmt.Sscanf(event.View.Primary, "%d:%d", &minutes, &seconds); err != nil || n != 2 {
+			t.Fatalf("invalid Timer countdown: %q", event.View.Primary)
+		}
+		// Labels round up to seconds. Permit delivery jitter, but do not let
+		// cached pre-background views stand in for the current saved deadline.
+		difference := time.Duration(minutes*60+seconds)*time.Second - time.Until(deadline)
+		if difference >= 0 && difference <= time.Second+100*time.Millisecond {
+			return event
+		}
+	}
+}
+
+func TestTimerDeadlineAssertionSkipsStaleBufferedView(t *testing.T) {
+	channel := make(chan appmgr.Event, 1)
+	inbox := newEventInbox(channel)
+	inbox.pending = []appmgr.Event{{App: wire.TimerID, Kind: "view", View: wire.View{Primary: "04:59"}, Detail: "stale"}}
+	channel <- appmgr.Event{App: wire.TimerID, Kind: "view", View: wire.View{Primary: "04:57"}, Detail: "current"}
+	if event := timerViewAtDeadline(t, inbox, time.Now().Add(297*time.Second)); event.Detail != "current" {
+		t.Fatal("stale buffered countdown satisfied the deadline assertion")
+	}
+}
+
 func TestSeparateProcessesBackgroundAndRestart(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs two OS processes")
@@ -88,6 +150,10 @@ func TestSeparateProcessesBackgroundAndRestart(t *testing.T) {
 	if started.View.ButtonLabel != "PAUSE" {
 		t.Fatalf("timer did not start: %+v", started.View)
 	}
+	persisted := timerstate.Load(filepath.Join(stateDir, "timer.json"), time.Now())
+	if !persisted.Running || persisted.Deadline.IsZero() {
+		t.Fatal("running Timer deadline was not persisted")
+	}
 	if err := mgr.SetForeground(wire.ClockID); err != nil {
 		t.Fatal(err)
 	}
@@ -99,17 +165,14 @@ func TestSeparateProcessesBackgroundAndRestart(t *testing.T) {
 	if err := mgr.SetForeground(wire.TimerID); err != nil {
 		t.Fatal(err)
 	}
-	resumed := get(t, events, wire.TimerID, "view", 5*time.Second)
-	if resumed.View.Primary == "05:00" {
-		t.Fatalf("timer did not count down while backgrounded: %+v", resumed.View)
-	}
+	timerViewAtDeadline(t, events, persisted.Deadline)
 	// Crash only Timer. Its saved deadline must survive supervisor restart.
 	if !mgr.Input(wire.TimerID, "crash", 0) {
 		t.Fatal("unable to send crash test")
 	}
 	get(t, events, wire.TimerID, "error", 5*time.Second)
 	get(t, events, wire.TimerID, "connected", 5*time.Second)
-	recovered := get(t, events, wire.TimerID, "view", 5*time.Second)
+	recovered := timerViewAtDeadline(t, events, persisted.Deadline)
 	if recovered.View.ButtonLabel != "PAUSE" {
 		t.Fatalf("timer did not recover countdown: %+v", recovered.View)
 	}

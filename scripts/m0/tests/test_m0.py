@@ -134,14 +134,16 @@ class ReleaseControlSimulation(unittest.TestCase):
         (self.root/'releases').mkdir()
         self.bin=self.base/'mockbin';self.bin.mkdir()
         self.state=self.base/'systemctl_state.json'
+        self.fragment=self.base/'lightdm.service';self.fragment.write_text('[Service]\n')
         self.state.write_text(json.dumps({'roundos.service':{'active':False,'enabled':False},
-                                         'lightdm.service':{'active':True,'enabled':True}}))
+                                         'lightdm.service':{'active':True,'enabled':True,'fragment':str(self.fragment)}}))
         systemctl=self.bin/'systemctl'
         systemctl.write_text('''#!/usr/bin/env python3
 import json,os,sys
 from pathlib import Path
 p=Path(os.environ['M0_FAKE_SYSTEMCTL_STATE']);s=json.loads(p.read_text())
-a=sys.argv[1:];cmd=a[0];unit='lightdm.service' if cmd=='link' else a[-1];u=s[unit];rc=0
+a=sys.argv[1:];cmd=a[0];by_path=a[-1].startswith('/')
+unit='lightdm.service' if cmd=='link' or (cmd=='enable' and by_path) else a[-1];u=s[unit];rc=0
 s.setdefault('_calls',[]).append(a)
 failure=cmd+':'+unit
 if s.get('_fail',{}).get(failure,0)>0:
@@ -152,16 +154,24 @@ if cmd=='is-active':
 elif cmd=='is-enabled':
  mode='linked' if u.get('linked') else ('enabled' if u['enabled'] else u.get('mode','disabled'))
  if u.get('runtime') and mode in ('linked','enabled'):mode+='-runtime'
+ if u.get('external') and not u.get('unit_linked'):mode='not-found'
  print(mode);rc=0 if u['enabled'] else 1
 elif cmd=='show':
  print(s.get('_unit_type','notify') if '--property=Type' in a else u['fragment'])
-elif cmd=='enable':u.update(enabled=True,runtime='--runtime' in a)
+elif cmd=='enable':
+ if u.get('external') and not u.get('unit_linked') and not by_path:
+  p.write_text(json.dumps(s));sys.exit(1)
+ u.update(enabled=True,runtime='--runtime' in a)
+ if by_path:u['unit_linked']=True
 elif cmd=='link':u.update(linked=True,runtime='--runtime' in a,fragment=a[-1])
 elif cmd=='disable':
  if '--runtime' not in a or u.get('runtime'):u.update(enabled=False,runtime=False)
+ if u.get('external'):u['unit_linked']=False
  if '--now' in a:u['active']=False
 elif cmd=='stop':u['active']=False
 elif cmd=='start':
+ if u.get('external') and not u.get('unit_linked'):
+  p.write_text(json.dumps(s));sys.exit(1)
  u['active']=True
  if unit=='roundos.service' and s.get('_delayed_exit'):
   s['_die_on_check']=True
@@ -239,7 +249,7 @@ p.write_text(json.dumps(s));sys.exit(rc)
         self.assertTrue(state['lightdm.service']['enabled'])
         self.assertTrue(state['lightdm.service']['runtime'])
         self.assertIn(['disable','--runtime','lightdm.service'],state['_calls'])
-        self.assertIn(['enable','--runtime','lightdm.service'],state['_calls'])
+        self.assertIn(['enable','--runtime',str(self.fragment)],state['_calls'])
 
     def test_linked_runtime_unit_is_restored_without_enabling(self):
         fragment=self.base/'lightdm.service';fragment.write_text('[Service]\n')
@@ -367,5 +377,35 @@ p.write_text(json.dumps(s));sys.exit(rc)
         self.call('activate',success=False)
         self.assertEqual(record.read_text(),'invalid recovery record\n')
         self.assertTrue(json.loads(self.state.read_text())['lightdm.service']['active'])
+
+    def external_unit(self,runtime):
+        self.fragment=self.base/'custom'/'lightdm.service'
+        self.fragment.parent.mkdir();self.fragment.write_text('[Service]\n')
+        state=json.loads(self.state.read_text())
+        state['lightdm.service'].update(external=True,unit_linked=True,runtime=runtime,fragment=str(self.fragment))
+        self.state.write_text(json.dumps(state))
+
+    def test_runtime_enabled_external_unit_link_is_recreated_on_retry(self):
+        self.external_unit(runtime=True)
+        self.call('activate')
+        self.assertFalse(json.loads(self.state.read_text())['lightdm.service']['unit_linked'])
+        self.change_state(_fail={'enable:lightdm.service':1})
+        self.call('disable',success=False)
+        self.assertTrue((self.base/'desktop-stamp').exists())
+        self.call('disable')
+        state=json.loads(self.state.read_text())
+        self.assertTrue(state['lightdm.service']['unit_linked'])
+        self.assertTrue(state['lightdm.service']['runtime'])
+        self.assertTrue(state['lightdm.service']['active'])
+        self.assertIn(['enable','--runtime',str(self.fragment)],state['_calls'])
+
+    def test_persistently_enabled_external_unit_link_is_recreated(self):
+        self.external_unit(runtime=False)
+        self.call('activate');self.call('disable')
+        state=json.loads(self.state.read_text())
+        self.assertTrue(state['lightdm.service']['unit_linked'])
+        self.assertTrue(state['lightdm.service']['enabled'])
+        self.assertFalse(state['lightdm.service']['runtime'])
+        self.assertIn(['enable',str(self.fragment)],state['_calls'])
 
 if __name__=='__main__':unittest.main()

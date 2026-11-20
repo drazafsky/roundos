@@ -29,7 +29,12 @@ need_ssh() {
 }
 validate_desktop_state() {
   case "$was_enabled" in
-    enabled|enabled-runtime|disabled|masked|masked-runtime|static|indirect|generated|transient) :;;
+    enabled|enabled-runtime)
+      if [ -n "$was_fragment" ]; then
+        case "$was_fragment" in /*) :;; *) echo 'Invalid desktop unit path' >&2; return 1;; esac
+        [ -f "$was_fragment" ] || return 1
+      fi;;
+    disabled|masked|masked-runtime|static|indirect|generated|transient) :;;
     linked|linked-runtime)
       case "$was_fragment" in /*) :;; *) echo 'Missing linked desktop unit path' >&2; return 1;; esac
       [ -f "$was_fragment" ] || return 1;;
@@ -49,7 +54,9 @@ capture_desktop_state() {
   was_active=$(systemctl is-active "$DM" 2>/dev/null || true)
   was_fragment=''
   case "$was_enabled" in
-    linked|linked-runtime) was_fragment=$(systemctl show --property=FragmentPath --value "$DM") || return 1;;
+    enabled|enabled-runtime|linked|linked-runtime)
+      was_fragment=$(systemctl show --property=FragmentPath --value "$DM") || return 1
+      [ -n "$was_fragment" ] || return 1;;
   esac
   # A transient or unknown state must not poison future recovery attempts.
   validate_desktop_state || return 1
@@ -66,8 +73,9 @@ restore_dm() {
   fi
   load_desktop_state || return 1
   case "$was_enabled" in
-    enabled) systemctl enable "$DM" || return 1;;
-    enabled-runtime) systemctl enable --runtime "$DM" || return 1;;
+    # Enabling by absolute path also restores an external unit's removed link.
+    enabled) systemctl enable "${was_fragment:-$DM}" || return 1;;
+    enabled-runtime) systemctl enable --runtime "${was_fragment:-$DM}" || return 1;;
     linked) systemctl link "$was_fragment" || return 1;;
     linked-runtime) systemctl link --runtime "$was_fragment" || return 1;;
   esac

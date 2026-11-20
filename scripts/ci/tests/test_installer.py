@@ -25,6 +25,7 @@ class InstallerIdentityTests(unittest.TestCase):
         shutil.copyfile(ROOT / 'systemd/roundos.service', self.root / 'systemd/roundos.service')
         self.mockbin = self.root / 'mockbin'
         self.mockbin.mkdir()
+        self.systemctl_calls = self.root / 'systemctl.calls'
         self.command('id', 'echo 0')
         # Stop a matching build before touching service files or installation roots.
         self.command('systemctl', 'echo active; exit 0')
@@ -37,11 +38,14 @@ class InstallerIdentityTests(unittest.TestCase):
 
     def command(self, name, body):
         path = self.mockbin / name
+        if name == 'systemctl':
+            body = 'printf "%s\\n" "$*" >> "$SYSTEMCTL_CALL_LOG"\n' + body
         path.write_text('#!/bin/sh\n' + body + '\n')
         path.chmod(0o755)
 
     def run_installer(self):
-        env = dict(os.environ, PATH=str(self.mockbin) + os.pathsep + os.environ['PATH'])
+        env = dict(os.environ, PATH=str(self.mockbin) + os.pathsep + os.environ['PATH'],
+                   SYSTEMCTL_CALL_LOG=str(self.systemctl_calls))
         return subprocess.run(['sh', str(self.root / 'scripts/install-release.sh')],
                               env=env, capture_output=True, text=True, check=False)
 
@@ -55,12 +59,14 @@ class InstallerIdentityTests(unittest.TestCase):
         result = self.run_installer()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Refusing to change installed release', result.stderr)
+        self.assertEqual(self.systemctl_calls.read_text().splitlines(),
+                         ['is-active roundos.service'])
 
     def test_wrong_binary_version_fails_before_service_access(self):
         self.metadata.write_text('0.5.0\n')
         result = self.run_installer()
         self.assertIn('Wrong roundd build', result.stderr)
-        self.assertNotIn('CALLED_SYSTEMCTL', result.stdout)
+        self.assertFalse(self.systemctl_calls.exists(), 'systemctl accessed before identity validation')
 
     def test_missing_symlink_or_unsafe_metadata_rejected(self):
         self.metadata.unlink()

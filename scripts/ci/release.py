@@ -141,6 +141,11 @@ def publish(output, release_version, sha):
     tag = 'v' + release_version
     prefix = f'repos/{repo}'
     release = api(f'{prefix}/releases/tags/{tag}', missing_ok=True)
+    if release is None:
+        # The tag lookup can omit unpublished drafts. Authenticated release
+        # listing includes them; search every page before attempting creation.
+        pages = json.loads(gh('api', f'{prefix}/releases?per_page=100', '--paginate', '--slurp'))
+        release = next((item for page in pages for item in page if item['tag_name'] == tag), None)
     # GitHub returns 422, not 404, for a nonexistent commit ref. Probe the
     # tag endpoint first so genuine validation/API failures are never hidden.
     reference = api(f'{prefix}/git/ref/tags/{tag}', missing_ok=True)

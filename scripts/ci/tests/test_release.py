@@ -1,5 +1,6 @@
 """Offline package and publishing contract tests; no GitHub or hardware writes."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -81,19 +82,22 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             release.verify_assets(self.output, VERSION, SHA)
 
-    def publish_fixture(self, existing=False, wrong_commit=False, corrupt=False):
+    def publish_fixture(self, existing=False, wrong_commit=False, corrupt=False, draft=False):
         assets = self.package()
-        published = {'target_commitish': SHA, 'prerelease': True, 'draft': False,
+        published = {'tag_name': 'v' + VERSION, 'target_commitish': SHA, 'prerelease': True, 'draft': draft,
                      'assets': [{'name': name} for name in assets]}
         calls = []
         def api(path, missing_ok=False):
             if '/releases/tags/' in path:
-                return published if existing else None
+                return published if existing and not draft else None
             if '/git/ref/tags/' in path:
-                return {'ref': 'refs/tags/v' + VERSION} if existing or wrong_commit else None
+                return {'ref': 'refs/tags/v' + VERSION} if (existing and not draft) or wrong_commit else None
             return {'sha': 'b' * 40 if wrong_commit else SHA}
         def gh(*args):
             calls.append(args)
+            if args[0] == 'api':
+                # The matching draft may be on a later page, without a tag ref.
+                return json.dumps([[], [published] if existing else []])
             if args[:2] == ('release', 'download'):
                 target = Path(args[args.index('--dir') + 1])
                 for asset in assets:
@@ -107,9 +111,9 @@ class ReleaseTests(unittest.TestCase):
         calls, api, gh = self.publish_fixture()
         with mock.patch.object(release, 'api', side_effect=api), mock.patch.object(release, 'gh', side_effect=gh), mock.patch.dict(os.environ, GH_REPO='owner/repo'):
             release.publish(self.output, VERSION, SHA)
-        self.assertEqual([call[:2] for call in calls], [('release', 'create'), ('release', 'upload'), ('release', 'download'), ('release', 'edit')])
-        self.assertIn('--draft', calls[0])
-        self.assertIn(SHA, calls[0])
+        self.assertEqual([call[:2] for call in calls if call[0] == 'release'], [('release', 'create'), ('release', 'upload'), ('release', 'download'), ('release', 'edit')])
+        self.assertIn('--draft', calls[1])
+        self.assertIn(SHA, calls[1])
         self.assertIn('--latest=false', calls[-1])
 
     def test_published_rerun_only_verifies_never_overwrites(self):
@@ -117,6 +121,13 @@ class ReleaseTests(unittest.TestCase):
         with mock.patch.object(release, 'api', side_effect=api), mock.patch.object(release, 'gh', side_effect=gh), mock.patch.dict(os.environ, GH_REPO='owner/repo'):
             release.publish(self.output, VERSION, SHA)
         self.assertEqual([call[:2] for call in calls], [('release', 'download')])
+
+    def test_draft_on_later_page_resumed_without_creating_duplicate(self):
+        calls, api, gh = self.publish_fixture(existing=True, draft=True)
+        with mock.patch.object(release, 'api', side_effect=api), mock.patch.object(release, 'gh', side_effect=gh), mock.patch.dict(os.environ, GH_REPO='owner/repo'):
+            release.publish(self.output, VERSION, SHA)
+        self.assertEqual(calls[0], ('api', 'repos/owner/repo/releases?per_page=100', '--paginate', '--slurp'))
+        self.assertEqual([call[:2] for call in calls if call[0] == 'release'], [('release', 'upload'), ('release', 'download'), ('release', 'edit')])
 
     def test_wrong_tag_or_corrupt_upload_never_publishes(self):
         for wrong_commit, corrupt in [(True, False), (False, True)]:

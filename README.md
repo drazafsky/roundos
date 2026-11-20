@@ -48,3 +48,8 @@ Periodic app-RSS, frame p95 and input-to-present p95 summaries are written to th
 This release does **not** install a driver, change a kernel overlay, alter Plymouth, erase Timer state, modify existing NetworkManager profiles, or automatically enable a replacement desktop. No untrusted app sandbox exists: optional apps share one non-root account. The installer is intended for a reviewed local build on the Pi; never run a privileged installer from an untrusted archive.
 
 See [docs/SDK-APPS.md](docs/SDK-APPS.md) for the IPC v7 Go SDK, [docs/SECURITY-0.5.0.md](docs/SECURITY-0.5.0.md) for the privilege boundary, and [docs/TESTING-0.5.0.md](docs/TESTING-0.5.0.md) for final-release acceptance criteria.
+
+## Contributing
+
+Follow the [repository rules](AGENTS.md) for issue tracking, Copilot review,
+comment resolution, and squash merging with branch deletion.

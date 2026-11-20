@@ -141,7 +141,10 @@ def publish(output, release_version, sha):
     tag = 'v' + release_version
     prefix = f'repos/{repo}'
     release = api(f'{prefix}/releases/tags/{tag}', missing_ok=True)
-    commit = api(f'{prefix}/commits/{tag}', missing_ok=True)
+    # GitHub returns 422, not 404, for a nonexistent commit ref. Probe the
+    # tag endpoint first so genuine validation/API failures are never hidden.
+    reference = api(f'{prefix}/git/ref/tags/{tag}', missing_ok=True)
+    commit = api(f'{prefix}/commits/{tag}') if reference else None
     if commit and commit['sha'] != sha:
         raise ValueError('Existing tag points at a different commit')
     if release:

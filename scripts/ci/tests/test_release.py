@@ -89,6 +89,8 @@ class ReleaseTests(unittest.TestCase):
         def api(path, missing_ok=False):
             if '/releases/tags/' in path:
                 return published if existing else None
+            if '/git/ref/tags/' in path:
+                return {'ref': 'refs/tags/v' + VERSION} if existing or wrong_commit else None
             return {'sha': 'b' * 40 if wrong_commit else SHA}
         def gh(*args):
             calls.append(args)

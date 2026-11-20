@@ -1,0 +1,11 @@
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+ARG GO_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates curl git libdrm-dev pkg-config python3 file \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl --fail --location --retry 3 "https://go.dev/dl/go${GO_VERSION}.linux-armv6l.tar.gz" -o /tmp/go.tar.gz \
+    && echo "e50964c41c6e187375387939e2f380de7250eba44e2259dfeb75c540d9d585c3  /tmp/go.tar.gz" | sha256sum -c - \
+    && tar -C /usr/local -xzf /tmp/go.tar.gz \
+    && rm /tmp/go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}" GOARM=7
+WORKDIR /src

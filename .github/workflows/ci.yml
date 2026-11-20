@@ -1,0 +1,113 @@
+name: CI and prerelease
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Never cancel another merge's release. Reruns of the same commit serialize.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: sudo apt-get update && sudo apt-get install -y libdrm-dev pkg-config
+      - run: sh scripts/ci/verify.sh
+
+  host-build:
+    name: Host DRM build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: .go-version
+          cache: false
+      - run: sudo apt-get update && sudo apt-get install -y libdrm-dev pkg-config
+      - name: Build and verify release identity
+        env:
+          ROUNDOS_BUILD_ID: ${{ github.sha }}
+          ROUNDOS_OUTPUT_DIR: build/host
+        run: |
+          export ROUNDOS_VERSION=$(python3 scripts/ci/release.py version)
+          sh scripts/build.sh
+          test "$(build/host/roundd -version)" = "RoundOS $ROUNDOS_VERSION ($ROUNDOS_BUILD_ID)"
+
+  arm-build:
+    name: ARMv7 build and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm
+      - name: Build emulated Trixie toolchain
+        run: docker build --platform linux/arm/v7 --build-arg GO_VERSION="$(cat .go-version)" -t roundos-armv7 -f scripts/ci/Dockerfile.armv7 .
+      - name: Build, smoke test, and package
+        env:
+          ROUNDOS_BUILD_ID: ${{ github.sha }}
+        run: |
+          version=$(python3 scripts/ci/release.py version)
+          docker run --rm --platform linux/arm/v7 \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e GOCACHE=/tmp/go-cache \
+            -e ROUNDOS_VERSION="$version" -e ROUNDOS_BUILD_ID \
+            -e ROUNDOS_OUTPUT_DIR=build/armv7 \
+            -v "$PWD:/src" roundos-armv7 sh -ec '
+              sh scripts/build.sh
+              test "$(build/armv7/roundd -version)" = "RoundOS $ROUNDOS_VERSION ($ROUNDOS_BUILD_ID)"
+              for bin in roundd round-clock round-timer round-demo roundui; do
+                file "build/armv7/$bin" | grep -E "ELF 32-bit LSB.*ARM"
+              done
+              python3 scripts/ci/release.py package --build build/armv7 --output dist --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID"
+            '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: armv7-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish prerelease
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [tests, host-build, arm-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: armv7-release
+          path: dist
+      - name: Publish tested assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 scripts/ci/release.py publish --output dist --version "$(python3 scripts/ci/release.py version)" --sha "$GITHUB_SHA"

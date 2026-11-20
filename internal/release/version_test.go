@@ -11,7 +11,12 @@ import (
 )
 
 func TestFinalVersionAndIPC(t *testing.T) {
-	if Version != "0.5.0" {
+	_, file, _, _ := runtime.Caller(0)
+	base, err := os.ReadFile(filepath.Join(filepath.Dir(file), "../../VERSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Version != strings.TrimSpace(string(base))+"-dev" {
 		t.Fatalf("unexpected release: %q", Version)
 	}
 	if wire.Version != 7 {

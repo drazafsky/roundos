@@ -32,3 +32,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local build and CI package outputs
+/roundd
+/round-clock
+/round-timer
+/round-demo
+/roundui
+/RELEASE_VERSION
+/dist/
+/build/
+__pycache__/

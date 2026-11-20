@@ -27,10 +27,7 @@ need_ssh() {
     echo 'Display switching requires an SSH session, not the Pi desktop.' >&2; exit 1
   fi
 }
-load_desktop_state() {
-  [ ! -L "$STAMP" ] && [ -f "$STAMP" ] || { echo 'Missing or unsafe desktop recovery record' >&2; return 1; }
-  # Two-field records from previous versions remain valid for ordinary units.
-  read -r was_enabled was_active was_fragment < "$STAMP" || return 1
+validate_desktop_state() {
   case "$was_enabled" in
     enabled|enabled-runtime|disabled|masked|masked-runtime|static|indirect|generated|transient) :;;
     linked|linked-runtime)
@@ -40,6 +37,12 @@ load_desktop_state() {
   esac
   case "$was_active" in active|inactive|failed) :;; *) echo 'Unrecognized prior desktop active state' >&2; return 1;; esac
 }
+load_desktop_state() {
+  [ ! -L "$STAMP" ] && [ -f "$STAMP" ] || { echo 'Missing or unsafe desktop recovery record' >&2; return 1; }
+  # Two-field records from previous versions remain valid for ordinary units.
+  read -r was_enabled was_active was_fragment < "$STAMP" || return 1
+  validate_desktop_state
+}
 capture_desktop_state() {
   if [ -e "$STAMP" ] || [ -L "$STAMP" ]; then load_desktop_state; return; fi
   was_enabled=$(systemctl is-enabled "$DM" 2>/dev/null || true)
@@ -48,12 +51,13 @@ capture_desktop_state() {
   case "$was_enabled" in
     linked|linked-runtime) was_fragment=$(systemctl show --property=FragmentPath --value "$DM") || return 1;;
   esac
+  # A transient or unknown state must not poison future recovery attempts.
+  validate_desktop_state || return 1
   record=$(mktemp "$STAMP.XXXXXX") || return 1
   if ! printf '%s %s %s\n' "$was_enabled" "$was_active" "$was_fragment" > "$record" || ! mv -f "$record" "$STAMP"; then
     rm -f "$record"
     return 1
   fi
-  load_desktop_state
 }
 restore_dm() {
   if [ ! -e "$STAMP" ] && [ ! -L "$STAMP" ]; then

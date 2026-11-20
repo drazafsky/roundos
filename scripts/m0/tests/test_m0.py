@@ -332,4 +332,40 @@ p.write_text(json.dumps(s));sys.exit(rc)
         self.assertTrue(state['lightdm.service']['active'])
         self.assertFalse(state['roundos.service']['enabled'])
 
+    def test_unknown_snapshot_does_not_poison_record_or_prevent_retry(self):
+        state=json.loads(self.state.read_text())
+        state['lightdm.service'].update(enabled=False,mode='unknown')
+        self.state.write_text(json.dumps(state))
+        self.call('activate',success=False)
+        self.assertFalse((self.base/'desktop-stamp').exists())
+        state=json.loads(self.state.read_text())
+        self.assertFalse(state['roundos.service']['enabled'])
+        self.assertTrue(state['lightdm.service']['active'])
+        state['lightdm.service']['mode']='disabled'
+        self.state.write_text(json.dumps(state))
+        self.call('activate');self.call('disable')
+
+    def test_roundos_stop_failure_does_not_start_desktop_or_delete_record(self):
+        self.call('activate')
+        self.change_state(_fail={'disable:roundos.service':1})
+        self.call('disable',success=False)
+        state=json.loads(self.state.read_text())
+        self.assertTrue(state['roundos.service']['active'])
+        self.assertFalse(state['lightdm.service']['active'])
+        self.assertTrue((self.base/'desktop-stamp').exists())
+        self.call('disable')
+
+    def test_legacy_two_field_recovery_record_is_supported(self):
+        self.call('activate')
+        (self.base/'desktop-stamp').write_text('enabled active\n')
+        self.call('disable')
+        self.assertFalse((self.base/'desktop-stamp').exists())
+        self.assertTrue(json.loads(self.state.read_text())['lightdm.service']['active'])
+
+    def test_invalid_existing_record_is_preserved_for_diagnosis(self):
+        record=self.base/'desktop-stamp';record.write_text('invalid recovery record\n')
+        self.call('activate',success=False)
+        self.assertEqual(record.read_text(),'invalid recovery record\n')
+        self.assertTrue(json.loads(self.state.read_text())['lightdm.service']['active'])
+
 if __name__=='__main__':unittest.main()

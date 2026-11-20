@@ -30,22 +30,23 @@ func TestOptionalAppSupervisorIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
+	events := newEventInbox(mgr.Events())
 	if err = mgr.SetForeground("org.roundos.demo"); err != nil {
 		t.Fatal(err)
 	}
-	v := get(t, mgr.Events(), "org.roundos.demo", "view", 5*time.Second)
+	v := get(t, events, "org.roundos.demo", "view", 5*time.Second)
 	if len(v.View.Screens) != 2 || v.View.Screens[0].Title != "DEMO" {
 		t.Fatalf("demo widget tree: %+v", v.View)
 	}
 	if !mgr.Input("org.roundos.demo", "increment", 0) {
 		t.Fatal("app input not dispatched")
 	}
-	updated := get(t, mgr.Events(), "org.roundos.demo", "view", 5*time.Second)
+	updated := get(t, events, "org.roundos.demo", "view", 5*time.Second)
 	if updated.View.Screens[0].Subtitle != "COUNTED" {
 		t.Fatalf("demo action not executed: %+v", updated.View)
 	}
 	if err = mgr.SetForeground(wire.ClockID); err != nil {
 		t.Fatal(err)
 	}
-	_ = get(t, mgr.Events(), wire.ClockID, "view", 5*time.Second)
+	_ = get(t, events, wire.ClockID, "view", 5*time.Second)
 }

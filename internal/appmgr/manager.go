@@ -54,6 +54,7 @@ func (e *endpoint) enqueue(m wire.Message) bool {
 
 type Manager struct {
 	mu          sync.Mutex
+	eventMu     sync.Mutex // orders peer events with connection removal and exit
 	ctx         context.Context
 	cancel      context.CancelFunc
 	listener    net.Listener
@@ -167,6 +168,39 @@ func (m *Manager) report(ev Event) {
 	case <-m.ctx.Done():
 	}
 }
+
+// reportPeer drops messages from retired connections and orders accepted
+// messages before any subsequent disconnect/process-exit event. Never hold mu
+// while waiting for the shell to drain events: the shell calls manager APIs.
+func (m *Manager) reportPeer(e *endpoint, ev Event) {
+	m.eventMu.Lock()
+	defer m.eventMu.Unlock()
+	m.mu.Lock()
+	current := m.peers[e.app] == e
+	m.mu.Unlock()
+	if current {
+		select {
+		case <-e.closed:
+			return
+		default:
+		}
+		m.report(ev)
+	}
+}
+
+func (m *Manager) processExited(id, detail string) {
+	m.eventMu.Lock()
+	defer m.eventMu.Unlock()
+	m.mu.Lock()
+	delete(m.pids, id)
+	if e := m.peers[id]; e != nil {
+		delete(m.peers, id)
+		e.close()
+	}
+	delete(m.tokens, id)
+	m.mu.Unlock()
+	m.report(Event{App: id, Kind: "error", Detail: detail})
+}
 func newToken() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -207,19 +241,11 @@ func (m *Manager) supervise(id, stateDir string) {
 		if m.ctx.Err() != nil {
 			return
 		}
-		m.mu.Lock()
-		delete(m.pids, id)
-		if e := m.peers[id]; e != nil {
-			delete(m.peers, id)
-			e.close()
-		}
-		delete(m.tokens, id)
-		m.mu.Unlock()
 		msg := "exited"
 		if err != nil {
 			msg = err.Error()
 		}
-		m.report(Event{App: id, Kind: "error", Detail: msg})
+		m.processExited(id, msg)
 		if time.Since(started) > 30*time.Second {
 			failures = 0
 		}
@@ -263,18 +289,21 @@ func (m *Manager) handle(c net.Conn) {
 	if err != nil || hello.Type != "hello" {
 		return
 	}
+	m.eventMu.Lock()
 	m.mu.Lock()
 	token, known := m.tokens[hello.App]
 	if !known || token != hello.Token || token == "" || m.peers[hello.App] != nil {
 		m.mu.Unlock()
+		m.eventMu.Unlock()
 		return
 	}
 	e := &endpoint{app: hello.App, conn: c, send: make(chan wire.Message, 64), raw: make(chan wire.Message, 1), closed: make(chan struct{})}
 	m.peers[hello.App] = e
 	active := m.active == hello.App
-	m.mu.Unlock()
 	e.enqueue(wire.Message{Version: wire.Version, Type: "visibility", Visible: active})
+	m.mu.Unlock()
 	m.report(Event{App: hello.App, Kind: "connected"})
+	m.eventMu.Unlock()
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
@@ -312,13 +341,13 @@ func (m *Manager) handle(c net.Conn) {
 		case msg.Type == "view" && msg.View != nil:
 			v := *msg.View
 			current = &v
-			m.report(Event{App: hello.App, Kind: "view", View: v})
+			m.reportPeer(e, Event{App: hello.App, Kind: "view", View: v})
 		case msg.Type == "notify" && msg.Notification != nil:
 			n := *msg.Notification
-			m.report(Event{App: hello.App, Kind: "notify", Notification: &n})
+			m.reportPeer(e, Event{App: hello.App, Kind: "notify", Notification: &n})
 		case msg.Type == "text_request" && msg.TextRequest != nil:
 			req := *msg.TextRequest
-			m.report(Event{App: hello.App, Kind: "text_request", TextRequest: &req})
+			m.reportPeer(e, Event{App: hello.App, Kind: "text_request", TextRequest: &req})
 		case msg.Type == "subscribe_contacts":
 			m.mu.Lock()
 			e.rawContacts = msg.RawContacts
@@ -326,11 +355,12 @@ func (m *Manager) handle(c net.Conn) {
 		case msg.Type == "view_patch" && msg.Patch != nil && current != nil:
 			v := msg.Patch.Apply(*current)
 			current = &v
-			m.report(Event{App: hello.App, Kind: "view", View: v})
+			m.reportPeer(e, Event{App: hello.App, Kind: "view", View: v})
 		}
 	}
 	e.close()
 	<-writerDone
+	m.eventMu.Lock()
 	m.mu.Lock()
 	wasCurrent := m.peers[hello.App] == e
 	if wasCurrent {
@@ -340,6 +370,7 @@ func (m *Manager) handle(c net.Conn) {
 	if wasCurrent {
 		m.report(Event{App: hello.App, Kind: "disconnected"})
 	}
+	m.eventMu.Unlock()
 }
 func (m *Manager) SetForeground(id string) error {
 	if id != "" {

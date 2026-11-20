@@ -18,19 +18,24 @@ configuration, and maintenance.
    issue assignments when creating the PR and before merging, and update the
    PR assignee to match if necessary.
 
-4. **Every PR requires a completed GitHub Copilot review.** Request Copilot as a
+4. **Review code changes before creating a GitHub PR.** Use the `/review` skill
+   on the complete code diff intended for the PR. Address its actionable findings
+   and complete the review before creating the PR in GitHub. This review is in
+   addition to the required GitHub Copilot review.
+
+5. **Every PR requires a completed GitHub Copilot review.** Request Copilot as a
    reviewer and wait for its submitted review before merging. A pending review
    request does not satisfy this requirement. Ensure the review covers the
    changes being merged; request another review when subsequent changes need it.
 
-5. **Resolve every PR comment before merging.** Read and address comments from
+6. **Resolve every PR comment before merging.** Read and address comments from
    all reviewers, including Copilot, in review threads, review summaries, and
    the PR conversation. Make the necessary changes or explain the resolution.
    Explicitly resolve each review thread after its feedback has been addressed;
    marking a thread resolved without addressing its feedback is insufficient.
    No unresolved comments or review threads may remain at merge time.
 
-6. **Finish the PR once all merge conditions are met.** Verify the open issue
+7. **Finish the PR once all merge conditions are met.** Verify the open issue
    reference and matching PR assignee, that the Copilot review is complete,
    every comment and review thread is resolved, and all CI workflows and checks
    have passed for the latest PR commit. Once these conditions are met, squash

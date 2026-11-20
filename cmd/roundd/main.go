@@ -24,6 +24,7 @@ import (
 	"roundos/internal/presenter"
 	"roundos/internal/release"
 	"roundos/internal/rotary"
+	"roundos/internal/service"
 	"roundos/internal/shell"
 	"roundos/internal/systemgestures"
 	"roundos/internal/touch"
@@ -51,6 +52,7 @@ func main() {
 		}
 	}()
 	versionFlag := flag.Bool("version", false, "print RoundOS version and exit (no device access)")
+	startupProtocol := flag.Bool("startup-protocol", false, "print managed startup protocol and exit (no device access)")
 	backend := flag.String("backend", "png", "png (safe preview) or drm")
 	output := flag.String("output", "roundos-preview.png", "PNG preview path")
 	previewPage := flag.String("preview-page", "home", "PNG preview page: home, settings, wifi, clock, clock-options, clock-details, clock-gallery, timer, timer-duration, timer-picker, timer-dialog, touch, notifications, switcher, editor, accessibility")
@@ -85,6 +87,10 @@ func main() {
 	flag.Parse()
 	if *versionFlag {
 		fmt.Printf("RoundOS %s (%s)\n", release.Version, release.BuildID)
+		return
+	}
+	if *startupProtocol {
+		fmt.Println(service.StartupProtocol)
 		return
 	}
 	if *metricsEvery < 0 {
@@ -369,6 +375,8 @@ func main() {
 	}
 	presenterLoop := presenter.New(display, metrics)
 	defer presenterLoop.Close() // must happen before display.Close()
+	startup := service.NewStartup(service.NotifyReady)
+	firstFrame := presenterLoop.FirstFrame()
 	render := func(inputAt time.Time) {
 		presenterLoop.Submit(model, inputAt)
 	}
@@ -559,6 +567,16 @@ func main() {
 			alarm = timer.C
 		}
 		select {
+		case <-firstFrame:
+			if timer != nil {
+				timer.Stop()
+			}
+			firstFrame = nil
+			if err := startup.FramePresented(); err != nil {
+				log.Printf("startup readiness notification failed: %v", err)
+				exitCode = 1
+				return
+			}
 		case <-metricsTick:
 			log.Printf("RoundOS performance: %s; coalesced-visual-frames=%d", metrics.Summary(), presenterLoop.Coalesced())
 			if rss, err := perf.RSS(os.Getpid()); err == nil {
@@ -762,6 +780,11 @@ func main() {
 		case ev := <-manager.Events():
 			if timer != nil {
 				timer.Stop()
+			}
+			if err := startup.AppEvent(ev.App, ev.Kind); err != nil {
+				log.Printf("startup readiness notification failed: %v", err)
+				exitCode = 1
+				return
 			}
 			changed := false
 			oldPage := model.Page

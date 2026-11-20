@@ -110,6 +110,8 @@ func main() {
 		}
 	}
 	schedule()
+	// The first view acknowledges loaded Timer state even while backgrounded.
+	publish()
 	defer func() { stopTimer(&tick); stopTimer(&deadline) }()
 	for {
 		select {

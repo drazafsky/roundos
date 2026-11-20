@@ -22,22 +22,25 @@ type Request struct {
 }
 
 type Presenter struct {
-	pending   chan Request
-	errors    chan error
-	stop      chan struct{}
-	done      chan struct{}
-	once      sync.Once
-	coalesced atomic.Uint64
+	pending    chan Request
+	errors     chan error
+	firstFrame chan struct{}
+	stop       chan struct{}
+	done       chan struct{}
+	once       sync.Once
+	coalesced  atomic.Uint64
 }
 
 func New(display Display, stats *perf.Stats) *Presenter {
 	p := &Presenter{
 		pending: make(chan Request, 1), errors: make(chan error, 1),
 		stop: make(chan struct{}), done: make(chan struct{}),
+		firstFrame: make(chan struct{}),
 	}
 	go func() {
 		defer close(p.done)
 		framebuffer := image.NewRGBA(image.Rect(0, 0, shell.Width, shell.Height))
+		presented := false
 		for {
 			select {
 			case <-p.stop:
@@ -67,6 +70,10 @@ func New(display Display, stats *perf.Stats) *Presenter {
 					latency = time.Since(req.InputAt)
 				}
 				stats.Frame(time.Since(began), latency)
+				if !presented {
+					close(p.firstFrame)
+					presented = true
+				}
 			}
 		}
 	}()
@@ -101,6 +108,9 @@ func (p *Presenter) Submit(scene *shell.Model, inputAt time.Time) {
 // Coalesced reports intermediate images skipped, not touch events lost.
 func (p *Presenter) Coalesced() uint64    { return p.coalesced.Load() }
 func (p *Presenter) Errors() <-chan error { return p.errors }
+
+// FirstFrame closes only after a frame was successfully presented.
+func (p *Presenter) FirstFrame() <-chan struct{} { return p.firstFrame }
 func (p *Presenter) Close() {
 	p.once.Do(func() { close(p.stop); <-p.done })
 }

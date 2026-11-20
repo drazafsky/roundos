@@ -9,10 +9,19 @@ import (
 	"log"
 	"roundos/sdk/app"
 	"roundos/sdk/rui"
+	"unicode/utf8"
 )
 
 //go:embed layout.rui.bin
 var layout []byte
+
+func setTitle(title *string, value string) error {
+	if len(value) > 240 || !utf8.ValidString(value) {
+		return fmt.Errorf("title must be valid UTF-8 and at most 240 bytes")
+	}
+	*title = value
+	return nil
+}
 
 func main() {
 	client, err := app.Connect()
@@ -79,8 +88,11 @@ func main() {
 			log.Printf("RUI dispatch: %v", err)
 		}
 		if !handled && ev.Type == "text_result" && ev.TextResult != nil && ev.TextResult.ID == "demo-title" && !ev.TextResult.Canceled {
-			title = ev.TextResult.Value
-			_ = runtime.Invalidate("demo.subtitle")
+			if err := setTitle(&title, ev.TextResult.Value); err != nil {
+				log.Printf("Title edit rejected: %v", err)
+			} else {
+				_ = runtime.Invalidate("demo.subtitle")
+			}
 		}
 		if err := runtime.Flush(); err != nil {
 			log.Printf("RUI flush: %v", err)

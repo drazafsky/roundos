@@ -5,7 +5,8 @@ workflow. It checks Go tests, the race detector, DRM-tagged tests, vet, all thre
 Python suites, shell syntax, and RUI validation, compilation, previews and bundle
 determinism. Separate jobs build the host DRM backend and the ARMv7 package.
 The ARM build runs in emulated 32-bit Debian Trixie with its native compiler and
-libdrm headers; Go is pinned in `.go-version` for both architectures.
+libdrm headers; Go is pinned in `.go-version` for both architectures. When
+updating Go, also update its official ARM archive checksum in the Dockerfile.
 
 The original M0/M1/M2 provenance tools describe an immutable 0.5.0 archive.
 Their checksum manifest remains unchanged. Current CI tests the verifier with
@@ -57,7 +58,8 @@ Automation sets `ROUNDOS_VERSION`, `ROUNDOS_BUILD_ID`, and `ROUNDOS_OUTPUT_DIR`.
 
 The `main` ruleset requires **Tests**, **Host DRM build**, and **ARMv7 build and
 package**, an up-to-date branch, a PR, and resolved review conversations.
-Copilot review, open-issue references and assignment still follow `AGENTS.md`.
+The completed Copilot check is also required. Open-issue references, assignment,
+and review feedback resolution still follow `AGENTS.md`.
 Squash merging and automatic branch deletion are enabled in repository settings.
 
 CI never marks physical display, touch, Wi-Fi, managed boot, recovery or

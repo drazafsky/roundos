@@ -88,6 +88,9 @@ its latest candidate. Stable identities preserve navigation and compatible
 drafts. Removed focus chooses the nearest eligible old neighbor (preceding
 wins ties), then a new eligible control, or Back. Incompatible picker/slider
 transactions and structural kinetic scrolling are canceled without commits.
+Changes to touch geometry or actions cancel held contacts until release, clear
+drag state, and suppress a held rotary-button release. Compatible editing drafts
+remain available for the next deliberate interaction.
 
 ## Verification
 

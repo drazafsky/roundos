@@ -800,6 +800,7 @@ func main() {
 			}
 			changed := false
 			oldPage := model.Page
+			oldInputRevision := model.InputRevision
 			switch ev.Kind {
 			case "notify":
 				if ev.Notification != nil {
@@ -825,6 +826,18 @@ func main() {
 			}
 			if ev.Kind == "error" || ev.Kind == "stopped" {
 				log.Printf("app %s: %s", ev.App, ev.Detail)
+			}
+			if oldInputRevision != model.InputRevision {
+				suppressTouch = gestures.CancelUntilRelease() || suppressTouch
+				router.Reset()
+				if target := model.AppID(model.Page); target != "" {
+					manager.Gesture(target, wire.Gesture{Kind: "cancel"})
+					manager.Contacts(target, nil)
+				}
+				if !buttonDownAt.IsZero() {
+					suppressButton = true
+					buttonDownAt = time.Time{}
+				}
 			}
 			if oldPage != model.Page {
 				gestures.Reset()

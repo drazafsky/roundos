@@ -2,6 +2,7 @@ package shell
 
 import (
 	"math"
+	"time"
 
 	"roundos/internal/circleui"
 	"roundos/internal/wire"
@@ -20,6 +21,12 @@ func widgetByID(screen wire.Screen, id string) (wire.Widget, int, bool) {
 // the old visual order. Labels/values alone never cancel an in-progress edit.
 func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 	frames := m.AppStacks[page]
+	if page == m.Page && (old.Dialog == nil) != (next.Dialog == nil) {
+		m.cancelReloadContact()
+	} else if page == m.Page && old.Dialog != nil && next.Dialog != nil &&
+		(old.Dialog.ID != next.Dialog.ID || old.Dialog.CancelAction != next.Dialog.CancelAction || old.Dialog.ConfirmAction != next.Dialog.ConfirmAction) {
+		m.cancelReloadContact()
+	}
 	for i := range frames {
 		before, ok := findScreen(old, frames[i].ScreenID)
 		if !ok {
@@ -59,7 +66,13 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 		}
 		frames[i].FocusID = best
 	}
-	if page != m.Page || len(frames) == 0 {
+	if page != m.Page {
+		return
+	}
+	if len(frames) == 0 {
+		if len(next.Screens) != 0 || old.ButtonAction != next.ButtonAction {
+			m.cancelReloadContact()
+		}
 		return
 	}
 	id := frames[len(frames)-1].ScreenID
@@ -82,13 +95,29 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 	changed := !okBefore || !okAfter || len(before.Widgets) != len(after.Widgets) || before.Hero != "" && after.Hero == "" || before.Hero == "" && after.Hero != ""
 	if !changed {
 		for i, w := range before.Widgets {
-			if w.ID != after.Widgets[i].ID || w.Kind != after.Widgets[i].Kind {
+			if w.ID != after.Widgets[i].ID || !sameInputTarget(w, after.Widgets[i]) {
 				changed = true
 				break
 			}
 		}
 	}
 	if changed {
-		m.StopKinetic()
+		m.cancelReloadContact()
 	}
+}
+
+func sameInputTarget(a, b wire.Widget) bool {
+	return a.Kind == b.Kind && a.Action == b.Action && a.Target == b.Target &&
+		a.Disabled == b.Disabled && a.Min == b.Min && a.Max == b.Max && a.Step == b.Step && a.Wrap == b.Wrap
+}
+
+func (m *Model) cancelReloadContact() {
+	m.InputRevision++
+	// Keep compatible rotary/picker drafts, but detach the canceled finger so
+	// its release cannot commit a slider or start an inertial fling.
+	m.TouchSlider = ""
+	m.DragOriginScroll, m.DragOriginY = 0, 0
+	m.DragOriginPx, m.DragLastDY, m.DragVelocity = 0, 0, 0
+	m.DragLastAt = time.Time{}
+	m.StopKinetic()
 }

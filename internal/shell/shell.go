@@ -38,6 +38,7 @@ type Model struct {
 	LastTouch               image.Point
 	TouchUntil              time.Time
 	Contacts                []touch.Contact
+	InputRevision           uint64 // changes when an active view changes touch targets
 	LastGesture             string
 	SupportedContacts       int // configured/verified hardware profile; not the decoder limit
 	Notices                 []notify.Item

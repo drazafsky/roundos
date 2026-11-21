@@ -48,3 +48,7 @@ configuration, and maintenance.
    issue, with each milestone represented by its own native GitHub sub-issue
    attached to that parent. Create or identify the parent issue and all milestone
    sub-issues before beginning implementation.
+
+9. **Move issues to In Progress when work begins.** When starting work on a
+   GitHub issue, set its GitHub project status to **In Progress** before making
+   repository changes.

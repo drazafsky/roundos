@@ -42,6 +42,7 @@ func (p Preferences) Validate() error {
 type State struct {
 	Preferences    Preferences `json:"preferences"`
 	LastAttempt    time.Time   `json:"last_attempt"`
+	RetryAfter     time.Time   `json:"retry_after"`
 	IgnoredVersion string      `json:"ignored_version,omitempty"`
 }
 
@@ -84,11 +85,13 @@ func Open(path string, now time.Time) (*Store, error) {
 			var saved struct {
 				Preferences    json.RawMessage `json:"preferences"`
 				LastAttempt    time.Time       `json:"last_attempt"`
+				RetryAfter     time.Time       `json:"retry_after"`
 				IgnoredVersion string          `json:"ignored_version"`
 			}
 			err = json.Unmarshal(data, &saved)
 			if err == nil {
 				s.state.LastAttempt = saved.LastAttempt
+				s.state.RetryAfter = saved.RetryAfter
 				s.state.IgnoredVersion = saved.IgnoredVersion
 				s.state.Preferences, preferenceErr = decodePreferences(saved.Preferences)
 			}
@@ -104,6 +107,13 @@ func Open(path string, now time.Time) (*Store, error) {
 	// timestamp from an earlier boot postpone checks for days or years.
 	repair := err != nil || s.state.LastAttempt.After(now)
 	if s.state.LastAttempt.After(now) {
+		// Keep a server backoff relative to the attempt that produced it
+		// when the wall clock was corrected across boots.
+		if s.state.RetryAfter.After(s.state.LastAttempt) {
+			s.state.RetryAfter = now.Add(s.state.RetryAfter.Sub(s.state.LastAttempt))
+		} else {
+			s.state.RetryAfter = time.Time{}
+		}
 		s.state.LastAttempt = now
 	}
 	if repair {
@@ -155,12 +165,22 @@ func (s *Store) RecordAttempt(at time.Time) error {
 	if at.IsZero() {
 		return errors.New("update check attempt requires a timestamp")
 	}
-	return s.change(func(next *State) { next.LastAttempt = at })
+	return s.change(func(next *State) {
+		next.LastAttempt = at
+		// Starting an eligible request proves the previous backoff expired.
+		// Clear it in the same durable transaction in case this request is
+		// interrupted before its completion can be recorded.
+		next.RetryAfter = time.Time{}
+	})
 }
 
 // IgnoreVersion records a dismissed release; an empty version clears it.
 func (s *Store) IgnoreVersion(version string) error {
 	return s.change(func(next *State) { next.IgnoredVersion = version })
+}
+
+func (s *Store) SetRetryAfter(at time.Time) error {
+	return s.change(func(next *State) { next.RetryAfter = at })
 }
 
 func (s *Store) change(change func(*State)) error {

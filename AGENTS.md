@@ -42,3 +42,9 @@ configuration, and maintenance.
    merge the PR and delete its branch. Do not merge while an issue reference or
    PR assignment requirement is unmet, or while a review, comment resolution,
    or CI result is still pending or failing.
+
+8. **Group implementation plans with more than two milestones.** Any
+   implementation plan with three or more milestones must have a parent GitHub
+   issue, with each milestone represented by its own native GitHub sub-issue
+   attached to that parent. Create or identify the parent issue and all milestone
+   sub-issues before beginning implementation.

@@ -60,6 +60,9 @@ func TestInvalidPreferencesPreserveOtherState(t *testing.T) {
 		`{"automatic":false,"interval_minutes":14}`,
 		`{"automatic":false,"interval_minutes":"invalid"}`,
 		`{"automatic":"invalid","interval_minutes":30}`,
+		`{"automatic":false,"interval_minutes":null}`,
+		`{"automatic":null,"interval_minutes":30}`,
+		`null`,
 		`false`,
 	} {
 		t.Run(preferences, func(t *testing.T) {

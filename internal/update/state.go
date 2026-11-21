@@ -90,12 +90,7 @@ func Open(path string, now time.Time) (*Store, error) {
 			if err == nil {
 				s.state.LastAttempt = saved.LastAttempt
 				s.state.IgnoredVersion = saved.IgnoredVersion
-				if len(saved.Preferences) != 0 {
-					preferenceErr = json.Unmarshal(saved.Preferences, &s.state.Preferences)
-					if preferenceErr == nil {
-						preferenceErr = s.state.Preferences.Validate()
-					}
-				}
+				s.state.Preferences, preferenceErr = decodePreferences(saved.Preferences)
 			}
 		}
 	}
@@ -116,6 +111,29 @@ func Open(path string, now time.Time) (*Store, error) {
 		err = errors.Join(err, saveErr)
 	}
 	return s, err
+}
+
+func decodePreferences(data json.RawMessage) (Preferences, error) {
+	p := DefaultPreferences()
+	if len(data) == 0 {
+		return p, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return p, err
+	}
+	if fields == nil {
+		return p, errors.New("update preferences must be an object")
+	}
+	for _, key := range []string{"automatic", "interval_minutes"} {
+		if value, ok := fields[key]; ok && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return p, fmt.Errorf("update preference %s cannot be null", key)
+		}
+	}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return DefaultPreferences(), err
+	}
+	return p, p.Validate()
 }
 
 func (s *Store) Snapshot() State {

@@ -66,8 +66,8 @@ func TestReplacementIsStagedWithoutActionsOrStateLoss(t *testing.T) {
 	if err := r.Invalidate("demo.display"); err != nil {
 		t.Fatal("registered binding removed from layout must remain a valid invalidation key", err)
 	}
-	if count != 5 || title != "Application state" || pub.count() != 1 {
-		t.Fatal("replace executed effects or published outside Flush")
+	if count != 5 || title != "Application state" || pub.count() != 2 {
+		t.Fatal("replace did not atomically publish while preserving app state")
 	}
 	if err := r.Flush(); err != nil {
 		t.Fatal(err)
@@ -77,6 +77,69 @@ func TestReplacementIsStagedWithoutActionsOrStateLoss(t *testing.T) {
 	}
 	if _, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"}); err != nil || count != 6 {
 		t.Fatal("registered handler was lost", err)
+	}
+}
+
+func TestReplacementPublicationFailureKeepsActiveActions(t *testing.T) {
+	_, pub, r := loadDemo(t)
+	count, enabled, title := 5, true, "Old layout"
+	registerDemo(t, r, &count, &enabled, &title)
+	r.Dispatch(app.Event{Type: "visibility", Visible: true})
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	old := r.file
+	data := replacement(t, func(source []byte) []byte {
+		return bytes.Replace(source, []byte("onPress: demo.increment"), []byte("navigate: demo.settings"), 1)
+	})
+	pub.fail = true
+	if err := r.Replace(data); err == nil {
+		t.Fatal("expected publication failure")
+	}
+	if r.file != old || pub.count() != 1 {
+		t.Fatal("publication failure committed new runtime")
+	}
+	if handled, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"}); !handled || err != nil || count != 6 {
+		t.Fatal("displayed old action stopped working", handled, err, count)
+	}
+	pub.fail = false
+	if err := r.Replace(data); err != nil {
+		t.Fatal(err)
+	}
+	if handled, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"}); handled || err != nil || count != 6 {
+		t.Fatal("removed action remained active after successful publication")
+	}
+}
+
+func TestReplacementValidatesHiddenWidgetsAndInactiveDialogs(t *testing.T) {
+	for _, kind := range []string{"hidden-number", "hidden-label", "inactive-dialog"} {
+		t.Run(kind, func(t *testing.T) {
+			_, pub, r := loadDemo(t)
+			count, enabled, title := 5, false, strings.Repeat("x", 200)
+			registerDemo(t, r, &count, &enabled, &title)
+			r.Dispatch(app.Event{Type: "visibility", Visible: true})
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			old := r.file
+			data := replacement(t, func(source []byte) []byte {
+				switch kind {
+				case "hidden-number":
+					source = bytes.Replace(source, []byte("max: 99"), []byte("max: 4\n            visibleWhen: { bind: demo.enabled }"), 1)
+				case "hidden-label":
+					source = bytes.Replace(source, []byte("label: Count"), []byte("label: { bind: demo.subtitle }\n            visibleWhen: { bind: demo.enabled }"), 1)
+				case "inactive-dialog":
+					source = bytes.Replace(source, []byte("title: Reset count?"), []byte("title: { bind: demo.subtitle }"), 1)
+				}
+				return source
+			})
+			if err := r.Replace(data); err == nil {
+				t.Fatal("invalid unrendered property was accepted")
+			}
+			if r.file != old || pub.count() != 1 {
+				t.Fatal("failed hidden validation changed last-good state")
+			}
+		})
 	}
 }
 

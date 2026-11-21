@@ -162,6 +162,9 @@ func (c *Client) SubscribeContacts(enabled bool) error {
 func (c *Client) RequestText(id, label, initial string, secure bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.secureEditor != "" {
+		return errors.New("another secure text request is still active")
+	}
 	err := wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
 	if err == nil && secure {
 		c.secureEditor = id

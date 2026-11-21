@@ -35,6 +35,12 @@ func TestSecureEditorStateClearsOnlyForItsOwnResult(t *testing.T) {
 	if !c.SecureEditorActive() {
 		t.Fatal("secure request was not tracked")
 	}
+	if err := c.RequestText("other", "Other", "", true); err == nil {
+		t.Fatal("overlapping secure request accepted")
+	}
+	if err := c.RequestText("secret", "Other", "", false); err == nil {
+		t.Fatal("overlapping nonsecure request with reused ID accepted")
+	}
 	close(resume)
 	select {
 	case <-c.Events():

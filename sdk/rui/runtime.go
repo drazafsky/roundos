@@ -61,6 +61,7 @@ type Runtime struct {
 	dialogActions          map[string][2]string
 	dialogID               string
 	dialogNeedsClear       bool
+	lastView               *ui.View
 	visible, dirty, sealed bool
 }
 
@@ -375,10 +376,10 @@ func (r *Runtime) Flush() error {
 		// reopens the same declaration, before the client can deduplicate it.
 		cleared := v
 		cleared.Dialog = nil
-		err = r.publisher.Publish(cleared)
+		err = r.publish(cleared)
 	}
 	if err == nil {
-		err = r.publisher.Publish(v)
+		err = r.publish(v)
 	}
 	if err != nil {
 		r.mu.Lock()

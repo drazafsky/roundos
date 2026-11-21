@@ -78,6 +78,9 @@ manual supervisor launch; normal inherited environments are filtered out.
 value and frame-budget checks before replacing its tree. Bad candidates leave
 the runtime and visible UI intact. Getter panics during staging become
 sanitized errors. Existing registrations remain available for future layouts.
+Hidden widget properties and inactive dialogs are checked too. Candidate
+publication must succeed before its tree and actions become active; replacement
+also publishes one snapshot while hidden so the next foreground view agrees.
 
 `Client.SecureEditorActive()` reports only editing status. Replacement returns
 `rui.ErrReloadDeferred` while a secure editor is open, and the desktop retries

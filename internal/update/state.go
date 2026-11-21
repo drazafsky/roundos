@@ -45,13 +45,15 @@ type State struct {
 	IgnoredVersion string      `json:"ignored_version,omitempty"`
 }
 
-// Store serializes state changes and only publishes them in memory after the
-// atomic file replacement succeeds. The path belongs in the private shell state
-// directory, never in an application's writable state directory.
+// Store serializes state changes and publishes them in memory once the atomic
+// file replacement succeeds. A subsequent directory-sync failure still returns
+// an error, but memory must reflect the replacement already visible on disk.
+// The path belongs in the private shell state directory, not app-owned storage.
 type Store struct {
-	mu    sync.Mutex
-	path  string
-	state State
+	mu            sync.Mutex
+	path          string
+	state         State
+	syncDirectory func(string) error
 }
 
 // Open always returns a usable store. A non-nil error reports a read, recovery,
@@ -60,7 +62,7 @@ type Store struct {
 // Unreadable state conservatively starts one cooldown rather than permitting an
 // immediate request on every restart.
 func Open(path string, now time.Time) (*Store, error) {
-	s := &Store{path: path, state: State{Preferences: DefaultPreferences()}}
+	s := &Store{path: path, state: State{Preferences: DefaultPreferences()}, syncDirectory: syncStateDirectory}
 	var preferenceErr error
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -110,7 +112,8 @@ func Open(path string, now time.Time) (*Store, error) {
 		s.state.LastAttempt = now
 	}
 	if repair {
-		err = errors.Join(err, writeState(path, s.state))
+		_, saveErr := s.writeState(s.state)
+		err = errors.Join(err, saveErr)
 	}
 	return s, err
 }
@@ -147,43 +150,50 @@ func (s *Store) change(change func(*State)) error {
 	defer s.mu.Unlock()
 	next := s.state
 	change(&next)
-	if err := writeState(s.path, next); err != nil {
-		return err
+	committed, err := s.writeState(next)
+	if committed {
+		s.state = next
 	}
-	s.state = next
-	return nil
+	return err
 }
 
-func writeState(path string, state State) error {
+func (s *Store) writeState(state State) (bool, error) {
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(data)+1 > maxStateBytes {
-		return errors.New("update state exceeds size limit")
+		return false, errors.New("update state exceeds size limit")
 	}
-	dir := filepath.Dir(path)
+	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create update state directory: %w", err)
+		return false, fmt.Errorf("create update state directory: %w", err)
 	}
 	f, err := os.CreateTemp(dir, ".updates-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create update state file: %w", err)
+		return false, fmt.Errorf("create update state file: %w", err)
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
 	if _, err := f.Write(append(data, '\n')); err != nil {
-		return err
+		return false, err
 	}
 	if err := f.Sync(); err != nil {
-		return err
+		return false, err
 	}
 	if err := f.Close(); err != nil {
-		return err
+		return false, err
 	}
-	if err := os.Rename(f.Name(), path); err != nil {
-		return fmt.Errorf("replace update state: %w", err)
+	if err := os.Rename(f.Name(), s.path); err != nil {
+		return false, fmt.Errorf("replace update state: %w", err)
 	}
+	if err := s.syncDirectory(dir); err != nil {
+		return true, fmt.Errorf("update state replaced but directory durability is unconfirmed: %w", err)
+	}
+	return true, nil
+}
+
+func syncStateDirectory(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
 		return err

@@ -1,6 +1,7 @@
 package update
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -190,6 +191,32 @@ func TestInvalidChangesPreserveSavedState(t *testing.T) {
 	if string(before) != string(after) || s.Snapshot().IgnoredVersion != "0.6.0" {
 		t.Fatal("invalid changes modified state")
 	}
+}
+
+func TestPostRenameFailurePreservesCommittedState(t *testing.T) {
+	now := time.Now().UTC()
+	path := filepath.Join(t.TempDir(), "updates.json")
+	s, _ := Open(path, now)
+	if err := s.IgnoreVersion("0.6.0"); err != nil {
+		t.Fatal(err)
+	}
+	syncFailure := errors.New("injected directory sync failure")
+	s.syncDirectory = func(string) error { return syncFailure }
+	if err := s.RecordAttempt(now); !errors.Is(err, syncFailure) {
+		t.Fatalf("post-rename failure was not reported: %v", err)
+	}
+	if !s.Snapshot().LastAttempt.Equal(now) {
+		t.Fatal("memory does not reflect the replacement already on disk")
+	}
+	s.syncDirectory = syncStateDirectory
+	if err := s.SetPreferences(Preferences{IntervalMinutes: 30}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(path, now)
+	if err != nil || !reopened.Snapshot().LastAttempt.Equal(now) || reopened.Snapshot().IgnoredVersion != "0.6.0" {
+		t.Fatalf("later mutation overwrote the committed state: %+v, %v", reopened.Snapshot(), err)
+	}
+	assertNoTemporaryFiles(t, filepath.Dir(path))
 }
 
 func TestConcurrentChangesPreserveIndependentFields(t *testing.T) {

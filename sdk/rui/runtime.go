@@ -239,7 +239,9 @@ func (r *Runtime) Invalidate(keys ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, k := range keys {
-		if _, ok := r.file.Manifest.Bindings[k]; !ok {
+		_, declared := r.file.Manifest.Bindings[k]
+		_, registered := r.bindings[k]
+		if !declared && !registered {
 			return fmt.Errorf("undeclared invalidation key %q", k)
 		}
 	}
@@ -296,7 +298,14 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 		return false, fmt.Errorf("RUI registrations must be validated before dispatch")
 	}
 	h, ok := r.handlers[ev.Action]
-	if !ok {
+	declared := false
+	for _, action := range r.file.Manifest.Actions {
+		if action.Name == ev.Action {
+			declared = true
+			break
+		}
+	}
+	if !ok || !declared {
 		r.mu.Unlock()
 		return false, nil
 	}

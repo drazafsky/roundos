@@ -44,12 +44,13 @@ func fromWire(m wire.Message) Event {
 }
 
 type Client struct {
-	conn   net.Conn
-	mu     sync.Mutex
-	events chan Event
-	done   chan struct{}
-	once   sync.Once
-	last   *wire.View
+	conn         net.Conn
+	mu           sync.Mutex
+	events       chan Event
+	done         chan struct{}
+	once         sync.Once
+	last         *wire.View
+	secureEditor string
 }
 
 func Connect() (*Client, error) {
@@ -88,6 +89,13 @@ func (c *Client) readLoop() {
 		}
 		if msg.Type != "visibility" && msg.Type != "input" && msg.Type != "gesture" && msg.Type != "close" && msg.Type != "contacts" && msg.Type != "text_result" {
 			continue
+		}
+		if msg.Type == "text_result" && msg.TextResult != nil {
+			c.mu.Lock()
+			if c.secureEditor == msg.TextResult.ID {
+				c.secureEditor = ""
+			}
+			c.mu.Unlock()
 		}
 		select {
 		case c.events <- fromWire(msg):
@@ -154,6 +162,18 @@ func (c *Client) SubscribeContacts(enabled bool) error {
 func (c *Client) RequestText(id, label, initial string, secure bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
+	err := wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
+	if err == nil && secure {
+		c.secureEditor = id
+	}
+	return err
+}
+
+// SecureEditorActive lets development tooling defer layout replacement without
+// reading or exposing any editor value. Only a matching result clears it.
+func (c *Client) SecureEditorActive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.secureEditor != ""
 }
 func (c *Client) Close() error { c.once.Do(func() { c.conn.Close() }); return nil }

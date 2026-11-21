@@ -7,6 +7,9 @@ determinism. Separate jobs build the host DRM backend and the ARMv7 package.
 RUI checks also recompile the M3 demo's embedded bundle byte-for-byte, preview
 it, and build the optional demo for the host and ARMv7. The example stays in
 the source tree and is not installed or included as a managed release app.
+M4 runtime, private-control-session, SSH transport and reload interaction tests
+run in the normal Go/race suites. The developer workflow is opt-in; CI does not
+connect to a Pi, activate a display session, or enable production hot reload.
 The ARM build runs in emulated 32-bit Debian Trixie with its native compiler and
 libdrm headers; Go is pinned in `.go-version` for both architectures. When
 updating Go, also update its official ARM archive checksum in the Dockerfile.

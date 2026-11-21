@@ -191,6 +191,7 @@ func (m *Model) SetView(id string, v wire.View) bool {
 	if ok && reflect.DeepEqual(old, v) && status == "" {
 		return false
 	}
+	m.reconcileReplacement(page, old, v)
 	m.Views[page] = wire.CopyView(v)
 	m.syncNavigation(page)
 	if m.Page == page {

@@ -62,12 +62,12 @@ func (m *Model) syncNavigation(page int) {
 	for _, f := range frames {
 		if s, ok := findScreen(v, f.ScreenID); ok {
 			i := findFocus(s, f.FocusID)
-			if f.FocusID == "__back" && len(valid) > 0 {
+			if f.FocusID == "__back" && (len(valid) > 0 || circleui.First(s.Widgets) < 0) {
 				// Preserve nested-screen Back focus after live app updates.
 			} else if i >= 0 {
 				f.FocusID = s.Widgets[i].ID
 			} else {
-				f.FocusID = ""
+				f.FocusID = "__back"
 			}
 			if f.Scroll < 0 {
 				f.Scroll = 0
@@ -85,6 +85,8 @@ func (m *Model) syncNavigation(page int) {
 		valid = []NavFrame{{ScreenID: v.Screens[0].ID}}
 		if i := circleui.First(v.Screens[0].Widgets); i >= 0 {
 			valid[0].FocusID = v.Screens[0].Widgets[i].ID
+		} else {
+			valid[0].FocusID = "__back"
 		}
 	}
 	m.AppStacks[page] = valid

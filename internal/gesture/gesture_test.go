@@ -29,6 +29,30 @@ func find(events []Event, kind Type) (Event, bool) {
 	}
 	return Event{}, false
 }
+
+func TestCancelUntilReleaseSuppressesDragAndRemainingContacts(t *testing.T) {
+	d := New()
+	d.Process(f(0, c(1, 240, 190)))
+	d.Process(f(40, c(1, 240, 240)))
+	if !d.CancelUntilRelease() || !d.CancelUntilRelease() {
+		t.Fatal("active contact was lost during repeated cancellation")
+	}
+	for _, frame := range []touch.Frame{f(80, c(1, 240, 240), c(2, 200, 240)), f(120, c(2, 200, 240)), f(160)} {
+		if events := d.Process(frame); len(events) != 0 {
+			t.Fatalf("canceled contact emitted events: %+v", events)
+		}
+	}
+	if !d.Deadline().IsZero() || len(d.Tick(start.Add(time.Second))) != 0 {
+		t.Fatal("canceled contact retained a long-press deadline")
+	}
+	if d.CancelUntilRelease() {
+		t.Fatal("idle cancellation suppressed the next fresh contact")
+	}
+	d.Process(f(1100, c(3, 240, 190)))
+	if !contains(d.Process(f(1180)), Tap) {
+		t.Fatal("fresh tap was suppressed")
+	}
+}
 func TestTapDoubleTap(t *testing.T) {
 	d := New()
 	if !contains(d.Process(f(0, c(1, 150, 150))), Down) {

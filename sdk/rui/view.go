@@ -17,6 +17,17 @@ import (
 // Getters are invoked only by the calling application's Flush goroutine.
 type stateSnapshot map[string]binding
 
+func (r *Runtime) publish(view ui.View) error {
+	if err := r.publisher.Publish(view); err != nil {
+		return err
+	}
+	copy := wire.CopyView(view)
+	r.mu.Lock()
+	r.lastView = &copy
+	r.mu.Unlock()
+	return nil
+}
+
 func (s stateSnapshot) text(v spec.Value[string], max int) (string, error) {
 	if !v.Bound {
 		return v.Literal, nil

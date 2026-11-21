@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"os"
 	"roundos/sdk/app"
 	"roundos/sdk/rui"
 	"unicode/utf8"
@@ -79,23 +80,51 @@ func main() {
 	if err := runtime.ValidateBindings(); err != nil {
 		log.Fatal(err)
 	}
-	for ev := range client.Events() {
-		if ev.Type == "close" {
-			return
-		}
-		handled, err := runtime.Dispatch(ev)
+	var updates <-chan *rui.DevUpdate
+	if directory := os.Getenv("ROUNDOS_RUI_DEV_DIR"); directory != "" {
+		session, err := rui.ListenDev(context.Background(), directory)
 		if err != nil {
-			log.Printf("RUI dispatch: %v", err)
+			log.Fatal(err)
 		}
-		if !handled && ev.Type == "text_result" && ev.TextResult != nil && ev.TextResult.ID == "demo-title" && !ev.TextResult.Canceled {
-			if err := setTitle(&title, ev.TextResult.Value); err != nil {
-				log.Printf("Title edit rejected: %v", err)
-			} else {
-				_ = runtime.Invalidate("demo.subtitle")
+		defer session.Close()
+		updates = session.Updates()
+		log.Printf("RUI development session: %s", session.Path)
+	}
+	for {
+		select {
+		case update, ok := <-updates:
+			if !ok {
+				updates = nil
+				continue
 			}
-		}
-		if err := runtime.Flush(); err != nil {
-			log.Printf("RUI flush: %v", err)
+			if err := update.Apply(runtime); err != nil {
+				log.Printf("RUI reload: %v", err)
+			}
+			if err := runtime.Flush(); err != nil {
+				log.Printf("RUI flush: %v", err)
+			}
+			continue
+		case ev, ok := <-client.Events():
+			if !ok {
+				return
+			}
+			if ev.Type == "close" {
+				return
+			}
+			handled, err := runtime.Dispatch(ev)
+			if err != nil {
+				log.Printf("RUI dispatch: %v", err)
+			}
+			if !handled && ev.Type == "text_result" && ev.TextResult != nil && ev.TextResult.ID == "demo-title" && !ev.TextResult.Canceled {
+				if err := setTitle(&title, ev.TextResult.Value); err != nil {
+					log.Printf("Title edit rejected: %v", err)
+				} else {
+					_ = runtime.Invalidate("demo.subtitle")
+				}
+			}
+			if err := runtime.Flush(); err != nil {
+				log.Printf("RUI flush: %v", err)
+			}
 		}
 	}
 }

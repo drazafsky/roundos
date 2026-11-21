@@ -78,6 +78,8 @@ func main() {
 	clockExe := flag.String("clock-exec", "./round-clock", "clock app executable")
 	timerExe := flag.String("timer-exec", "./round-timer", "timer app executable")
 	appsDir := flag.String("apps-dir", "/etc/roundos/apps", "trusted optional-app manifest directory (missing directory is allowed)")
+	ruiDevApp := flag.String("rui-dev-app", "", "manual development only: registered app receiving compiled layout reloads")
+	ruiDevDir := flag.String("rui-dev-dir", "", "manual development only: app-owned private directory for reload control")
 	stateDir := flag.String("state-dir", "", "directory for shell-owned state (appearance, etc.)")
 	appUser := flag.String("app-user", "", "dedicated non-root system user for all apps (required when roundd runs as root)")
 	appStateDir := flag.String("app-state-dir", "/var/lib/roundos/app-data", "pre-provisioned private app data directory")
@@ -85,6 +87,12 @@ func main() {
 	backlightDevice := flag.String("backlight", "off", "off (default), auto, or explicit /sys/class/backlight/<name> path")
 	idleOff := flag.Duration("idle-off", 0, "optional inactivity timeout; requires -backlight, e.g. 45s")
 	flag.Parse()
+	if (*ruiDevApp == "") != (*ruiDevDir == "") {
+		log.Fatal("both -rui-dev-app and -rui-dev-dir are required")
+	}
+	if *ruiDevApp != "" && (os.Getenv("NOTIFY_SOCKET") != "" || os.Getenv("INVOCATION_ID") != "") {
+		log.Fatal("RUI development is unavailable in managed service sessions")
+	}
 	if *versionFlag {
 		fmt.Printf("RoundOS %s (%s)\n", release.Version, release.BuildID)
 		return
@@ -243,7 +251,11 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	manager, err := appmgr.NewWithAppsRuntime(ctx, *clockExe, *timerExe, *stateDir, extraApps, appRuntime)
+	var dev *appmgr.DevConfig
+	if *ruiDevApp != "" {
+		dev = &appmgr.DevConfig{AppID: *ruiDevApp, Directory: *ruiDevDir}
+	}
+	manager, err := appmgr.NewWithAppsRuntimeDev(ctx, *clockExe, *timerExe, *stateDir, extraApps, appRuntime, dev)
 	fatalIf(err)
 	defer manager.Close()
 	manager.Log()
@@ -788,6 +800,7 @@ func main() {
 			}
 			changed := false
 			oldPage := model.Page
+			oldInputRevision := model.InputRevision
 			switch ev.Kind {
 			case "notify":
 				if ev.Notification != nil {
@@ -813,6 +826,18 @@ func main() {
 			}
 			if ev.Kind == "error" || ev.Kind == "stopped" {
 				log.Printf("app %s: %s", ev.App, ev.Detail)
+			}
+			if oldInputRevision != model.InputRevision {
+				suppressTouch = gestures.CancelUntilRelease() || suppressTouch
+				router.Reset()
+				if target := model.AppID(model.Page); target != "" {
+					manager.Gesture(target, wire.Gesture{Kind: "cancel"})
+					manager.Contacts(target, nil)
+				}
+				if !buttonDownAt.IsZero() {
+					suppressButton = true
+					buttonDownAt = time.Time{}
+				}
 			}
 			if oldPage != model.Page {
 				gestures.Reset()

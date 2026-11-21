@@ -1,0 +1,113 @@
+package shell
+
+import (
+	"roundos/internal/gesture"
+	"roundos/internal/touch"
+	"roundos/internal/wire"
+	"roundos/sdk/ui"
+	"testing"
+	"time"
+)
+
+func TestReloadFocusUsesNearestOldNeighborAndPreservesDraft(t *testing.T) {
+	m := New()
+	v := ui.View{Screens: []ui.ScreenSpec{ui.Screen("root", "Root", "", "", ui.Button("a", "A", "a"), ui.Button("b", "B", "b"), ui.Button("c", "C", "c"), ui.NumberPicker("picker", "Pick", "pick", 5, 0, 10, 1))}}
+	m.SetView(wire.ClockID, v)
+	m.Select(Clock)
+	m.AppStacks[Clock][0].FocusID = "b"
+	m.PickerID = "picker"
+	m.PickerValue = 7
+	v.Screens[0].Widgets[1].Disabled = true
+	m.SetView(wire.ClockID, v)
+	if m.AppStacks[Clock][0].FocusID != "a" {
+		t.Fatal("nearest focus did not prefer preceding neighbor")
+	}
+	if m.PickerID != "picker" || m.PickerValue != 7 {
+		t.Fatal("compatible picker draft lost")
+	}
+	v.Screens[0].Widgets[3].Max = 6
+	m.SetView(wire.ClockID, v)
+	if m.PickerID != "" {
+		t.Fatal("incompatible picker transaction retained")
+	}
+	for i := range v.Screens[0].Widgets {
+		v.Screens[0].Widgets[i].Disabled = true
+	}
+	m.SetView(wire.ClockID, v)
+	if m.AppStacks[Clock][0].FocusID != "__back" {
+		t.Fatal("empty focus set did not fall back to Back")
+	}
+}
+
+func TestReloadCancelsContactBeforeItCanActivateNewTarget(t *testing.T) {
+	for _, change := range []string{"reorder", "action", "disabled", "hero", "removed-screen"} {
+		t.Run(change, func(t *testing.T) {
+			m := New()
+			v := ui.View{Screens: []ui.ScreenSpec{ui.Screen("root", "Root", "", "", ui.Button("a", "A", "a"), ui.Button("b", "B", "b"))}}
+			m.SetView(wire.ClockID, v)
+			m.Select(Clock)
+			d := gesture.New()
+			at := time.Unix(100, 0)
+			d.Process(touch.Frame{At: at, Contacts: []touch.Contact{{ID: 1, X: 240, Y: 190}}})
+			revision := m.InputRevision
+			switch change {
+			case "reorder":
+				v.Screens[0].Widgets[0], v.Screens[0].Widgets[1] = v.Screens[0].Widgets[1], v.Screens[0].Widgets[0]
+			case "action":
+				v.Screens[0].Widgets[0].Action = "other"
+			case "disabled":
+				v.Screens[0].Widgets[0].Disabled = true
+			case "hero":
+				v.Screens[0].Hero = "123"
+			case "removed-screen":
+				v.Screens[0].ID = "new-root"
+			}
+			m.SetView(wire.ClockID, v)
+			if m.InputRevision == revision {
+				t.Fatal("changed touch targets did not request input cancellation")
+			}
+			if !d.CancelUntilRelease() {
+				t.Fatal("active contact was not suppressed")
+			}
+			for _, ev := range d.Process(touch.Frame{At: at.Add(80 * time.Millisecond)}) {
+				if ev.Type == gesture.Tap || ev.Type == gesture.DragEnd {
+					t.Fatalf("canceled contact can still activate a widget: %+v", ev)
+				}
+			}
+			// The next intentional tap works on the replacement tree.
+			d.Process(touch.Frame{At: at.Add(time.Second), Contacts: []touch.Contact{{ID: 2, X: 240, Y: 190}}})
+			found := false
+			for _, ev := range d.Process(touch.Frame{At: at.Add(1080 * time.Millisecond)}) {
+				found = found || ev.Type == gesture.Tap
+			}
+			if !found {
+				t.Fatal("fresh contact did not recover after cancellation")
+			}
+		})
+	}
+}
+
+func TestReloadDetachesDragAndPreservesCompatibleDraft(t *testing.T) {
+	m := New()
+	v := ui.View{Screens: []ui.ScreenSpec{ui.Screen("root", "Root", "", "", ui.Slider("s", "Slider", "set", 3, 0, 10, 1), ui.Button("b", "B", "b"))}}
+	m.SetView(wire.ClockID, v)
+	m.Select(Clock)
+	m.EditingWidget, m.TouchSlider, m.WidgetEditValue = "s", "s", 7
+	m.DragVelocity, m.KineticVelocity = 900, 900
+	m.DragLastAt = time.Now()
+	revision := m.InputRevision
+	v.Screens[0].Widgets[0].Value = 4
+	v.Screens[0].Widgets[0].Label = "New label"
+	m.SetView(wire.ClockID, v)
+	if m.InputRevision != revision || m.TouchSlider != "s" {
+		t.Fatal("value-only refresh canceled a compatible contact")
+	}
+	v.Screens[0].Widgets[0], v.Screens[0].Widgets[1] = v.Screens[0].Widgets[1], v.Screens[0].Widgets[0]
+	m.SetView(wire.ClockID, v)
+	if m.EditingWidget != "s" || m.WidgetEditValue != 7 || m.TouchSlider != "" || m.DragVelocity != 0 || m.KineticVelocity != 0 || !m.DragLastAt.IsZero() {
+		t.Fatalf("draft or drag state after reload: %+v", m)
+	}
+	if _, action := m.WidgetDragEnd(); action != "" {
+		t.Fatal("canceled finger committed the retained draft")
+	}
+}

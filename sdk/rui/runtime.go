@@ -61,6 +61,7 @@ type Runtime struct {
 	dialogActions          map[string][2]string
 	dialogID               string
 	dialogNeedsClear       bool
+	lastView               *ui.View
 	visible, dirty, sealed bool
 }
 
@@ -239,7 +240,9 @@ func (r *Runtime) Invalidate(keys ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, k := range keys {
-		if _, ok := r.file.Manifest.Bindings[k]; !ok {
+		_, declared := r.file.Manifest.Bindings[k]
+		_, registered := r.bindings[k]
+		if !declared && !registered {
 			return fmt.Errorf("undeclared invalidation key %q", k)
 		}
 	}
@@ -296,7 +299,14 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 		return false, fmt.Errorf("RUI registrations must be validated before dispatch")
 	}
 	h, ok := r.handlers[ev.Action]
-	if !ok {
+	declared := false
+	for _, action := range r.file.Manifest.Actions {
+		if action.Name == ev.Action {
+			declared = true
+			break
+		}
+	}
+	if !ok || !declared {
 		r.mu.Unlock()
 		return false, nil
 	}
@@ -366,10 +376,10 @@ func (r *Runtime) Flush() error {
 		// reopens the same declaration, before the client can deduplicate it.
 		cleared := v
 		cleared.Dialog = nil
-		err = r.publisher.Publish(cleared)
+		err = r.publish(cleared)
 	}
 	if err == nil {
-		err = r.publisher.Publish(v)
+		err = r.publish(v)
 	}
 	if err != nil {
 		r.mu.Lock()

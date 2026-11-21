@@ -104,6 +104,15 @@ type Detector struct {
 func New() *Detector       { return &Detector{} }
 func (d *Detector) Reset() { *d = Detector{} }
 
+// CancelUntilRelease discards pending gestures and ignores the rest of an
+// active contact sequence. It returns whether contacts still need releasing.
+func (d *Detector) CancelUntilRelease() bool {
+	active := len(d.last) > 0 || d.waitingForRelease
+	d.Reset()
+	d.waitingForRelease = active
+	return active
+}
+
 // Deadline returns the next long-press deadline, or zero when none is pending.
 func (d *Detector) Deadline() time.Time {
 	if d.tracking && !d.dragged && !d.held && !d.multi {

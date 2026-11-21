@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -67,6 +68,7 @@ type Manager struct {
 	active      string
 	events      chan Event
 	credentials *appCredentials
+	dev         *DevConfig
 	wg          sync.WaitGroup
 }
 
@@ -85,6 +87,15 @@ func NewWithApps(parent context.Context, clockExe, timerExe, stateDir string, ex
 // runtime is non-nil. The shell owns the IPC socket and credentials are never
 // included in inherited root environment variables.
 func NewWithAppsRuntime(parent context.Context, clockExe, timerExe, stateDir string, extra []AppSpec, runtime *Runtime) (*Manager, error) {
+	return NewWithAppsRuntimeDev(parent, clockExe, timerExe, stateDir, extra, runtime, nil)
+}
+
+// NewWithAppsRuntimeDev enables development only for an explicit manual launch.
+func NewWithAppsRuntimeDev(parent context.Context, clockExe, timerExe, stateDir string, extra []AppSpec, runtime *Runtime, dev *DevConfig) (*Manager, error) {
+	if dev != nil {
+		value := *dev
+		dev = &value
+	}
 	credentials, err := validateRuntime(runtime)
 	if err != nil {
 		return nil, err
@@ -98,6 +109,9 @@ func NewWithAppsRuntime(parent context.Context, clockExe, timerExe, stateDir str
 			return nil, fmt.Errorf("duplicate app %q", app.ID)
 		}
 		executables[app.ID] = app.Exec
+	}
+	if err := validateDev(dev, credentials, executables); err != nil {
+		return nil, err
 	}
 	directory, err := os.MkdirTemp("", "roundos-ipc-")
 	if err != nil {
@@ -141,7 +155,7 @@ func NewWithAppsRuntime(parent context.Context, clockExe, timerExe, stateDir str
 	}
 	ctx, cancel := context.WithCancel(parent)
 	m := &Manager{ctx: ctx, cancel: cancel, listener: listener, directory: directory, socket: path,
-		executables: executables, credentials: credentials,
+		executables: executables, credentials: credentials, dev: dev,
 		tokens: map[string]string{}, peers: map[string]*endpoint{}, pids: map[string]int{}, events: make(chan Event, 256)}
 	m.wg.Add(1)
 	go func() { defer m.wg.Done(); m.acceptLoop() }()
@@ -227,6 +241,17 @@ func (m *Manager) supervise(id, stateDir string) {
 			}}
 		} else {
 			cmd.Env = append(os.Environ(), "ROUNDOS_SOCKET="+m.socket, "ROUNDOS_APP_ID="+id, "ROUNDOS_TOKEN="+token, "ROUNDOS_STATE_DIR="+stateDir)
+		}
+		// Never inherit the development opt-in from a service environment.
+		filtered := cmd.Env[:0]
+		for _, value := range cmd.Env {
+			if !strings.HasPrefix(value, "ROUNDOS_RUI_DEV_DIR=") {
+				filtered = append(filtered, value)
+			}
+		}
+		cmd.Env = filtered
+		if m.dev != nil && m.dev.AppID == id {
+			cmd.Env = append(cmd.Env, "ROUNDOS_RUI_DEV_DIR="+m.dev.Directory)
 		}
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

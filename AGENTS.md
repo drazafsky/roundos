@@ -52,3 +52,7 @@ configuration, and maintenance.
 9. **Move issues to In Progress when work begins.** When starting work on a
    GitHub issue, set its GitHub project status to **In Progress** before making
    repository changes.
+
+10. **Move issues to PR Review when their PR is created.** After creating a
+    pull request, set the GitHub project status of each issue tracked by the PR
+    to **PR Review**.

@@ -27,6 +27,16 @@ case "$actual" in
   "RoundOS $VERSION ("*")") : ;;
   *) echo "Wrong roundd build: $actual" >&2; exit 1;;
 esac
+protocol=$("$ROOT/roundd" -update-protocol)
+if [ "$protocol" != roundos-update-v1 ]; then
+  echo 'Build lacks managed update/recovery support' >&2
+  exit 1
+fi
+for update_unit in roundos.service roundos-update.service roundos-update-recover.service; do
+  if [ ! -f "$ROOT/systemd/$update_unit" ] || [ -L "$ROOT/systemd/$update_unit" ]; then
+    echo "Missing or untrusted service template: $update_unit" >&2; exit 1
+  fi
+done
 unit=/etc/systemd/system/roundos.service
 if [ -f "$unit" ] && ! cmp -s "$ROOT/systemd/roundos.service" "$unit"; then
   # Permit a managed template upgrade, including the original unmodified
@@ -55,6 +65,38 @@ if [ -f "$unit" ] && ! cmp -s "$ROOT/systemd/roundos.service" "$unit"; then
   fi
 fi
 if [ -L "$unit" ]; then echo 'Refusing a symlinked service unit' >&2;exit 1;fi
+# The controller and its units remain unchanged during a live transaction. The
+# independent helper upgrades them only after the replacement shell is ready.
+check_update_unit() {
+  update_unit=$1
+  update_target=/etc/systemd/system/$update_unit
+  if [ -L "$update_target" ]; then echo 'Refusing a symlinked update service unit' >&2; exit 1; fi
+  if [ ! -e "$update_target" ] || cmp -s "$ROOT/systemd/$update_unit" "$update_target"; then return; fi
+  for update_link in current previous update-controller; do
+    update_prior=$(readlink -f "/opt/roundos/$update_link" 2>/dev/null || true)
+    case "$update_prior" in
+      /opt/roundos/releases/*)
+        if [ -f "$update_prior/$update_unit" ] && [ ! -L "$update_prior/$update_unit" ] &&
+           [ -f "$update_prior/SHA256SUMS" ] && [ ! -L "$update_prior/SHA256SUMS" ] &&
+           (cd "$update_prior" && awk -v name="$update_unit" 'NF == 2 && $2 == name && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ {printf "%s  %s\n", $1, $2}' SHA256SUMS | sha256sum -c --status -) &&
+           cmp -s "$update_prior/$update_unit" "$update_target"; then return; fi;;
+    esac
+  done
+  echo "Refusing to replace a manually edited update unit: $update_target" >&2; exit 1
+}
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
+  check_update_unit roundos-update.service
+  check_update_unit roundos-update-recover.service
+  if [ -L /opt/roundos/update-controller ]; then
+    update_controller=$(readlink -f /opt/roundos/update-controller)
+    case "$update_controller" in
+      /opt/roundos/releases/*) [ -d "$update_controller" ] || { echo 'Missing update controller release' >&2; exit 1; };;
+      *) echo 'Refusing an untrusted update controller link' >&2; exit 1;;
+    esac
+  elif [ -e /opt/roundos/update-controller ]; then
+    echo 'Refusing a non-link update controller' >&2; exit 1
+  fi
+fi
 service_state=$(systemctl is-active roundos.service 2>/dev/null || true)
 case "$service_state" in
   inactive|failed) :;;
@@ -94,7 +136,9 @@ for bin in roundd round-clock round-timer; do
 done
 install -o root -g root -m 0644 "$ROOT/README.md" "$stage/README.md"
 install -o root -g root -m 0644 "$ROOT/systemd/roundos.service" "$stage/roundos.service"
-( cd "$stage" && sha256sum bin/roundd bin/round-clock bin/round-timer roundos.service > SHA256SUMS && sha256sum -c SHA256SUMS )
+install -o root -g root -m 0644 "$ROOT/systemd/roundos-update.service" "$stage/roundos-update.service"
+install -o root -g root -m 0644 "$ROOT/systemd/roundos-update-recover.service" "$stage/roundos-update-recover.service"
+( cd "$stage" && sha256sum bin/roundd bin/round-clock bin/round-timer roundos.service roundos-update.service roundos-update-recover.service > SHA256SUMS && sha256sum -c SHA256SUMS )
 chmod 0755 "$stage"
 mv -- "$stage" "$DEST"
 stage=''
@@ -115,5 +159,11 @@ ln -s "$DEST" /opt/roundos/.current.new
 mv -Tf /opt/roundos/.current.new /opt/roundos/current
 install -o root -g root -m 0644 "$ROOT/systemd/roundos.service" "$unit"
 install -o root -g root -m 0755 "$ROOT/scripts/roundosctl.sh" /usr/local/sbin/roundosctl
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
+  install -o root -g root -m 0644 "$ROOT/systemd/roundos-update.service" /etc/systemd/system/roundos-update.service
+  install -o root -g root -m 0644 "$ROOT/systemd/roundos-update-recover.service" /etc/systemd/system/roundos-update-recover.service
+  ln -s "$DEST" /opt/roundos/.update-controller.new
+  mv -Tf /opt/roundos/.update-controller.new /opt/roundos/update-controller
+fi
 systemctl daemon-reload
 echo "Installed $DEST; service NOT enabled. Review docs and run: sudo roundosctl activate"

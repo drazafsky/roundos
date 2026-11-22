@@ -1,0 +1,20 @@
+[Unit]
+Description=Recover an interrupted RoundOS release installation
+After=local-fs.target
+Before=roundos.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/opt/roundos/update-controller/bin/roundd -recover-update
+TimeoutStartSec=60s
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=full
+ReadWritePaths=/opt/roundos /etc/systemd/system /var/lib/roundos
+ProtectHome=yes
+PrivateTmp=yes
+StandardInput=null
+StandardOutput=journal
+StandardError=journal

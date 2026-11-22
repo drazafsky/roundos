@@ -255,6 +255,24 @@ func TestSecureEditorAndPanickingGettersKeepLastLayout(t *testing.T) {
 	}
 }
 
+func TestReplacementCanceledDuringStagingKeepsLastLayout(t *testing.T) {
+	data, pub, r := loadDemo(t)
+	count, enabled, title := 5, true, "retained"
+	registerDemo(t, r, &count, &enabled, &title)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	getter := r.bindings["demo.subtitle"]
+	getter.text = func() string { cancel(); return title }
+	r.bindings["demo.subtitle"] = getter
+	old := r.file
+	if err := r.ReplaceContext(ctx, data); !errors.Is(err, context.Canceled) {
+		t.Fatal("canceled staging was accepted", err)
+	}
+	if r.file != old || pub.count() != 0 {
+		t.Fatal("canceled staging changed active tree or published a snapshot")
+	}
+}
+
 func TestPrivateDevelopmentSessionDeliversOnAppLoop(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root development sessions are deliberately refused")

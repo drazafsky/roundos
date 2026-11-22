@@ -1,6 +1,7 @@
 package rui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -14,9 +15,19 @@ var ErrReloadDeferred = errors.New("layout reload deferred while secure editor i
 // Replace validates a compiled layout against existing registrations and state
 // before changing anything. Call it on the Dispatch/Flush event loop. It never
 // invokes action handlers, parses YAML, or changes application-owned state.
-func (r *Runtime) Replace(data []byte) (err error) {
+func (r *Runtime) Replace(data []byte) error {
+	return r.ReplaceContext(context.Background(), data)
+}
+
+// ReplaceContext checks cancellation before publication, including after
+// staging getters. Once publication begins, successful delivery commits the
+// matching tree/actions even if cancellation arrives during that delivery.
+func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if editor, ok := r.publisher.(interface{ SecureEditorActive() bool }); ok && editor.SecureEditorActive() {
 		return ErrReloadDeferred
 	}
@@ -71,6 +82,9 @@ func (r *Runtime) Replace(data []byte) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Any required dialog reset uses the old tree. If candidate publication
 	// fails, displayed controls still agree with the active runtime/actions.
 	if needsClear && view.Dialog != nil && lastView != nil && lastView.Dialog != nil {
@@ -79,6 +93,9 @@ func (r *Runtime) Replace(data []byte) (err error) {
 		if err := r.publish(cleared); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := r.publish(view); err != nil {
 		return err

@@ -50,7 +50,7 @@ func (u *DevUpdate) Apply(runtime *Runtime) error {
 	if err := u.ctx.Err(); err != nil {
 		return err
 	}
-	err := runtime.Replace(u.data)
+	err := runtime.ReplaceContext(u.ctx, u.data)
 	u.reply <- err
 	return err
 }

@@ -28,6 +28,7 @@ import (
 	"roundos/internal/shell"
 	"roundos/internal/systemgestures"
 	"roundos/internal/touch"
+	"roundos/internal/update"
 	"roundos/internal/wifi"
 	"roundos/internal/wire"
 	"roundos/sdk/ui"
@@ -251,6 +252,12 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	updateStore, updateErr := update.Open(filepath.Join(*stateDir, "updates.json"), time.Now())
+	if updateErr != nil {
+		log.Printf("update state recovery: %v", updateErr)
+	}
+	updates := update.Start(ctx, updateStore, update.NewGitHub(), release.Version, nil)
+	updateEvents := updates.Events()
 	var dev *appmgr.DevConfig
 	if *ruiDevApp != "" {
 		dev = &appmgr.DevConfig{AppID: *ruiDevApp, Directory: *ruiDevDir}
@@ -598,6 +605,18 @@ func main() {
 				if rss, err := perf.RSS(pid); err == nil {
 					log.Printf("%s PID=%d RSS=%.2f MiB", appID, pid, float64(rss)/(1024*1024))
 				}
+			}
+		case status, ok := <-updateEvents:
+			if !ok {
+				updateEvents = nil
+				continue
+			}
+			if status.OperationErr != nil {
+				log.Printf("release update operation: %v", status.OperationErr)
+			} else if status.Err != nil {
+				log.Printf("release check: %v", status.Err)
+			} else if status.Sequence > 0 && !status.Busy {
+				log.Printf("release check: %s", status.Result.Status)
 			}
 		case err := <-presenterLoop.Errors():
 			if timer != nil {

@@ -49,7 +49,10 @@ type CheckResult struct {
 	Release *Release
 }
 
-type RateLimitError struct{ RetryAt time.Time }
+type RateLimitError struct {
+	RetryAt    time.Time
+	ObservedAt time.Time
+}
 
 func (e *RateLimitError) Error() string { return "GitHub release checking is rate limited" }
 
@@ -97,7 +100,7 @@ func (g *GitHub) Check(ctx context.Context, installed string) (CheckResult, erro
 	}
 	if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusForbidden &&
 		(resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "")) {
-		return CheckResult{}, &RateLimitError{RetryAt: retryDeadline(resp.Header, g.now())}
+		return CheckResult{}, g.rateLimit(resp.Header)
 	}
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusForbidden {
@@ -110,7 +113,7 @@ func (g *GitHub) Check(ctx context.Context, installed string) (CheckResult, erro
 			if readErr == nil && len(data) <= 64*1024 && json.Unmarshal(data, &problem) == nil {
 				message := strings.ToLower(problem.Message)
 				if strings.Contains(message, "rate limit") || strings.Contains(message, "abuse detection") {
-					return CheckResult{}, &RateLimitError{RetryAt: retryDeadline(resp.Header, g.now())}
+					return CheckResult{}, g.rateLimit(resp.Header)
 				}
 			}
 		}
@@ -174,6 +177,11 @@ func validAssetURL(raw, tag, name string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && u.Host == "github.com" && u.User == nil && u.RawQuery == "" && u.Fragment == "" &&
 		u.Path == "/drazafsky/roundos/releases/download/"+tag+"/"+name
+}
+
+func (g *GitHub) rateLimit(headers http.Header) *RateLimitError {
+	observed := g.now()
+	return &RateLimitError{RetryAt: retryDeadline(headers, observed), ObservedAt: observed}
 }
 
 func retryDeadline(h http.Header, now time.Time) time.Time {

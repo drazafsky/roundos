@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build reproducible ARMv7 packages and publish verified GitHub prereleases."""
+"""Build reproducible ARMv7 packages and publish verified GitHub releases."""
 import argparse
 import gzip
 import hashlib
@@ -15,13 +15,21 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARIES = ('roundd', 'round-clock', 'round-timer', 'round-demo', 'roundui')
+PROVENANCE_START = '<!-- roundos-stable-provenance -->'
+PROVENANCE_END = '<!-- /roundos-stable-provenance -->'
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def validate(version, sha):
+def validate(version, sha, *, allow_stable=False):
+    if allow_stable and re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+        if not re.fullmatch(r'[0-9a-f]{40}', sha):
+            raise ValueError('Expected a full commit SHA')
+        if any(int(part) > 2**64 - 1 for part in version.split('.')):
+            raise ValueError('Release version number is too large')
+        return
     if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-dev\.[1-9][0-9]*\.g[0-9a-f]{7}', version):
         raise ValueError('Expected a generated development prerelease version')
     if not re.fullmatch(r'[0-9a-f]{40}', sha) or not version.endswith('.g' + sha[:7]):
@@ -42,8 +50,11 @@ def write_checksums(directory, paths):
         f'{digest(directory / path)}  {path}\n' for path in sorted(paths)))
 
 
-def package(build, output, release_version, sha):
-    validate(release_version, sha)
+def package(build, output, release_version, sha, *, source=None, stable=False):
+    validate(release_version, sha, allow_stable=stable)
+    if stable and '-' in release_version:
+        raise ValueError('Stable publication requires a stable version')
+    source = source or ROOT
     if (build / 'RELEASE_VERSION').read_text().strip() != release_version:
         raise ValueError('Build metadata does not match release version')
     for name in BINARIES:
@@ -53,7 +64,7 @@ def package(build, output, release_version, sha):
             raise ValueError(f'{name} is not a regular little-endian 32-bit ARM ELF')
     output.mkdir(parents=True, exist_ok=True)
     metadata = json.dumps({'version': release_version, 'commit': sha,
-                           'target': 'linux-armv7', 'hardware_validated': False},
+                           'target': 'linux-armv7', 'hardware_validated': stable},
                           sort_keys=True, indent=2) + '\n'
     name = f'roundos-{release_version}-linux-armv7'
     with tempfile.TemporaryDirectory() as tmp:
@@ -63,12 +74,12 @@ def package(build, output, release_version, sha):
             shutil.copyfile(build / binary, stage / binary)
             (stage / binary).chmod(0o755)
         for directory in ('config', 'docs', 'layouts', 'schemas', 'systemd'):
-            shutil.copytree(ROOT / directory, stage / directory)
+            shutil.copytree(source / directory, stage / directory)
         (stage / 'scripts').mkdir()
         for script in ('install-release.sh', 'roundosctl.sh', 'setup-app-user.sh'):
-            shutil.copyfile(ROOT / 'scripts' / script, stage / 'scripts' / script)
+            shutil.copyfile(source / 'scripts' / script, stage / 'scripts' / script)
             (stage / 'scripts' / script).chmod(0o755)
-        shutil.copyfile(ROOT / 'README.md', stage / 'README.md')
+        shutil.copyfile(source / 'README.md', stage / 'README.md')
         (stage / 'RELEASE_VERSION').write_text(release_version + '\n')
         (stage / 'release.json').write_text(metadata)
         paths = [p.relative_to(stage).as_posix() for p in stage.rglob('*') if p.is_file()]
@@ -87,8 +98,10 @@ def package(build, output, release_version, sha):
     write_checksums(output, [name + '.tar.gz', 'release.json'])
 
 
-def verify_assets(output, release_version, sha):
-    validate(release_version, sha)
+def verify_assets(output, release_version, sha, *, stable=False):
+    validate(release_version, sha, allow_stable=stable)
+    if stable and '-' in release_version:
+        raise ValueError('Stable publication requires a stable version')
     name = f'roundos-{release_version}-linux-armv7'
     expected = {name + '.tar.gz', 'release.json'}
     rows = (output / 'SHA256SUMS').read_text().splitlines()
@@ -103,7 +116,7 @@ def verify_assets(output, release_version, sha):
     if checksums.keys() != expected:
         raise ValueError('Missing package checksum')
     metadata = json.loads((output / 'release.json').read_text())
-    if metadata != {'version': release_version, 'commit': sha, 'target': 'linux-armv7', 'hardware_validated': False}:
+    if metadata != {'version': release_version, 'commit': sha, 'target': 'linux-armv7', 'hardware_validated': stable}:
         raise ValueError('Release metadata mismatch')
     # Inspect without extracting or executing untrusted archive members.
     with tarfile.open(output / (name + '.tar.gz')) as archive:
@@ -135,8 +148,8 @@ def api(path, missing_ok=False):
     return json.loads(result.stdout)
 
 
-def publish(output, release_version, sha):
-    assets = verify_assets(output, release_version, sha)
+def publish(output, release_version, sha, *, stable=False, notes=None, before_publish=None):
+    assets = verify_assets(output, release_version, sha, stable=stable)
     repo = os.environ['GH_REPO']
     tag = 'v' + release_version
     prefix = f'repos/{repo}'
@@ -153,7 +166,7 @@ def publish(output, release_version, sha):
     if commit and commit['sha'] != sha:
         raise ValueError('Existing tag points at a different commit')
     if release:
-        if release['target_commitish'] != sha or not release['prerelease']:
+        if release['target_commitish'] != sha or release['prerelease'] != (not stable):
             raise ValueError('Existing release has different identity or release type')
         if not {a['name'] for a in release['assets']} <= set(assets):
             raise ValueError('Existing draft contains unexpected assets')
@@ -168,10 +181,23 @@ def publish(output, release_version, sha):
                         raise ValueError(f'Published asset differs: {asset}')
             print(f'Already published and verified {tag}')
             return
+        if stable:
+            body = release.get('body') or ''
+            provenance = f'{PROVENANCE_START}\n{notes}\n{PROVENANCE_END}'
+            pattern = re.escape(PROVENANCE_START) + r'.*?' + re.escape(PROVENANCE_END)
+            if body:
+                if len(re.findall(pattern, body, flags=re.S)) != 1:
+                    raise ValueError('Stable draft lacks a unique automation provenance block')
+                body = re.sub(pattern, lambda _: provenance, body, count=1, flags=re.S)
+            else:
+                body = provenance
+            gh('release', 'edit', tag, '--notes', body)
     else:
-        gh('release', 'create', tag, '--draft', '--prerelease', '--latest=false',
+        kind = ['--prerelease=false', '--latest=false'] if stable else ['--prerelease', '--latest=false']
+        gh('release', 'create', tag, '--draft', *kind,
            '--target', sha, '--title', f'RoundOS {release_version}', '--generate-notes',
-           '--notes', 'Development ARMv7 build. Physical Pi display, touch, Wi-Fi, boot, recovery and performance acceptance remain pending. Installation and activation are manual. See docs/CI-RELEASES.md in the package.')
+           '--notes', (f'{PROVENANCE_START}\n{notes}\n{PROVENANCE_END}' if stable else
+                       'Development ARMv7 build. Physical Pi display, touch, Wi-Fi, boot, recovery and performance acceptance remain pending. Installation and activation are manual. See docs/CI-RELEASES.md in the package.'))
     # Partial drafts may be resumed. Published releases are never overwritten.
     gh('release', 'upload', tag, *[str(output / a) for a in assets], '--clobber')
     with tempfile.TemporaryDirectory() as tmp:
@@ -179,11 +205,14 @@ def publish(output, release_version, sha):
         for asset in assets:
             if digest(Path(tmp) / asset) != digest(output / asset):
                 raise ValueError(f'Uploaded asset differs: {asset}')
-    gh('release', 'edit', tag, '--draft=false', '--prerelease', '--latest=false')
+    kind = ['--prerelease=false', '--latest'] if stable else ['--prerelease', '--latest=false']
+    if before_publish:
+        before_publish()
+    gh('release', 'edit', tag, '--draft=false', *kind)
     # Confirm GitHub created the tag at the exact tested merge commit.
     if api(f'{prefix}/commits/{tag}')['sha'] != sha:
         raise ValueError('Published tag does not match tested commit')
-    print(f'Published {tag}; hardware acceptance remains pending')
+    print(f'Published {tag}' + ('' if stable else '; hardware acceptance remains pending'))
 
 
 def main():
@@ -195,16 +224,19 @@ def main():
         p.add_argument('--version', required=True)
         p.add_argument('--sha', required=True)
         p.add_argument('--output', type=Path, required=True)
+        if command != 'publish':
+            p.add_argument('--stable', action='store_true', help='For accepted stable builds only; publication uses stable_release.py')
         if command == 'package':
             p.add_argument('--build', type=Path, required=True)
+            p.add_argument('--source', type=Path, default=ROOT)
     args = parser.parse_args()
     if args.command == 'version':
         print(version())
     elif args.command == 'package':
-        package(args.build, args.output, args.version, args.sha)
-        verify_assets(args.output, args.version, args.sha)
+        package(args.build, args.output, args.version, args.sha, source=args.source, stable=args.stable)
+        verify_assets(args.output, args.version, args.sha, stable=args.stable)
     elif args.command == 'verify':
-        verify_assets(args.output, args.version, args.sha)
+        verify_assets(args.output, args.version, args.sha, stable=args.stable)
     else:
         publish(args.output, args.version, args.sha)
 

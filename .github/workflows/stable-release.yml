@@ -1,0 +1,118 @@
+name: Stable release
+
+on:
+  issues:
+    types: [closed, reopened, edited, labeled, unlabeled]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_run:
+    workflows: [CI and prerelease]
+    types: [completed]
+  # Reconcile changes made with GITHUB_TOKEN and events coalesced by concurrency.
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: stable-releases
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Find completed release parents
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.parents.outputs.matrix }}
+      ready: ${{ steps.parents.outputs.ready }}
+    steps:
+      # Always execute control code from main, never a PR or an issue payload.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - id: parents
+        name: Evaluate release eligibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 scripts/ci/stable_release.py discover --output "$RUNNER_TEMP/stable-parents.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          matrix = json.loads((Path(os.environ['RUNNER_TEMP']) / 'stable-parents.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps(matrix) + '\n')
+              output.write('ready=' + str(bool(matrix['include'])).lower() + '\n')
+          PY
+
+  release:
+    name: Publish stable ${{ matrix.version }}
+    needs: discover
+    if: needs.discover.outputs.ready == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+      actions: read
+    env:
+      RELEASE_PARENT: ${{ matrix.parent }}
+      ROUNDOS_VERSION: ${{ matrix.version }}
+      ROUNDOS_BUILD_ID: ${{ matrix.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: automation
+          persist-credentials: false
+      - name: Recheck parent before building
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 automation/scripts/ci/stable_release.py check --parent "$RELEASE_PARENT" --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.sha }}
+          path: source
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm
+      - name: Build the accepted source with stable identity
+        working-directory: source
+        run: |
+          test "$(git rev-parse HEAD)" = "$ROUNDOS_BUILD_ID"
+          docker build --platform linux/arm/v7 --build-arg GO_VERSION="$(cat .go-version)" -t roundos-stable-armv7 -f scripts/ci/Dockerfile.armv7 .
+          docker run --rm --platform linux/arm/v7 \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e GOCACHE=/tmp/go-cache \
+            -e ROUNDOS_VERSION -e ROUNDOS_BUILD_ID \
+            -e ROUNDOS_OUTPUT_DIR=build/stable \
+            -v "$PWD:/src" -v "$GITHUB_WORKSPACE/automation:/automation:ro" \
+            roundos-stable-armv7 sh -ec '
+              sh scripts/build.sh
+              test "$(build/stable/roundd -version)" = "RoundOS $ROUNDOS_VERSION ($ROUNDOS_BUILD_ID)"
+              test "$(build/stable/roundd -startup-protocol)" = "sd-notify-v1"
+              for bin in roundd round-clock round-timer round-demo roundui; do
+                file "build/stable/$bin" | grep -E "ELF 32-bit LSB.*ARM"
+              done
+              python3 /automation/scripts/ci/release.py package --source /src --stable --build build/stable --output dist-stable --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID"
+            '
+      - name: Recheck acceptance and publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 automation/scripts/ci/stable_release.py publish --parent "$RELEASE_PARENT" --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID" --output source/dist-stable

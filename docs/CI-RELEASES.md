@@ -68,6 +68,112 @@ Squash merging and automatic branch deletion are enabled in repository settings.
 
 CI never marks physical display, touch, Wi-Fi, managed boot, recovery or
 performance acceptance as passed. These remain manual checks on the Pi.
-Prereleases are not marked latest. Stable release promotion is a separate manual
-process after hardware validation; this workflow does not install or activate
-anything on a device.
+Prereleases are not marked latest. Stable publication is a separate automated
+workflow after recorded hardware validation, described below. Neither workflow
+installs or activates anything on a device.
+
+## Automatic stable releases from parent issues
+
+The **Stable release** workflow publishes one stable version when a designated
+release parent meets all release conditions. Ordinary feature parents, including
+the Settings update parent, do not enable publication by themselves. Per-merge
+development prereleases continue as before. The Settings updater discovers only
+newer compatible stable releases and still requires the user to choose Install.
+
+Choose a release commit that includes the implementation and whose `VERSION`
+file contains the intended stable version. Complete its physical Pi testing.
+The workflow builds this exact commit with the stable version embedded; it does
+not relabel an existing development archive or automatically select a newer main.
+
+To enable a release, a repository maintainer creates the parent, attaches its
+milestones as native GitHub sub-issues, adds the `release:stable` label, and puts
+one declaration in the parent description:
+
+````markdown
+```roundos-release
+{
+  "version": "0.6.0",
+  "commit": "FULL_40_CHARACTER_LOWERCASE_COMMIT_SHA",
+  "acceptance_issue": 123
+}
+```
+````
+
+Replace the example SHA and issue number with actual values. The acceptance
+issue must be a descendant of that parent. Every descendant, including nested
+grouping issues and the acceptance issue, must be closed as **completed**;
+closing as **not planned** does not qualify. The release parent itself can
+remain open while the last milestone finishes; closing it as not planned blocks
+publication.
+
+Every implementation leaf needs a GitHub closing PR merged into `main`, and
+every closing PR must be included in the selected commit. Use closing keywords
+in the PR description so GitHub records the relationship. For an issue devoted
+only to manual verification, a maintainer can use `release:verification` instead
+of a closing PR. Such issues must also be maintainer-authored. The designated
+physical acceptance issue does not need a PR. Grouping issues can have children
+instead of a closing PR.
+
+After testing, a maintainer with current repository write access records a
+comment on the acceptance issue with this block:
+
+````markdown
+```roundos-acceptance
+{
+  "version": "0.6.0",
+  "commit": "FULL_40_CHARACTER_LOWERCASE_COMMIT_SHA",
+  "result": "passed",
+  "evidence": "https://github.com/drazafsky/roundos/issues/123#issuecomment-456"
+}
+```
+````
+
+The evidence URL must point into this repository and identify the actual Pi
+results: display/touch, Wi-Fi, boot, performance, installation and recovery as
+applicable to that release. The comment is an operator attestation, not a result
+inferred by CI. Version and commit must match the parent exactly. Reopen the
+acceptance issue, delete its acceptance comment, or remove `release:stable` to
+withdraw acceptance before publication. Editing only the evidence text or
+adding a failure comment does not revoke an earlier passing attestation.
+
+The selected commit must be on main, with a successful **CI and prerelease**
+push run and successful Tests, Host DRM build, and ARMv7 build and package jobs.
+The most recent run/attempt is checked; an earlier successful attempt cannot
+override a pending or failed rerun. The target version must match the selected
+source's `VERSION` and cannot be older than a published stable version.
+
+This workflow uses the built-in `GITHUB_TOKEN` and requires no release secret.
+GitHub restricts that token from creating or updating a release whose target's
+workflow files differ from the default branch. Therefore the accepted commit's
+`.github/workflows` contents must still match main. Later code or documentation
+merges are allowed; a workflow change blocks the old candidate before building,
+with a diagnostic asking for acceptance of a commit with current workflows.
+The workflow never substitutes main for the accepted commit. See GitHub's
+[release API permissions](https://docs.github.com/en/rest/releases/releases#create-a-release).
+
+The workflow rechecks parents after issue changes, acceptance comment changes,
+and CI completion. An hourly reconciliation covers events generated with
+`GITHUB_TOKEN` and events coalesced by concurrency. **Run workflow** provides an
+immediate reconciliation without bypassing any gates. Blocked parents and their
+reasons appear in the discovery job log.
+
+Eligible releases build in the existing emulated ARMv7 toolchain with a stable
+version, full commit identity, startup-protocol check, and architecture smoke
+checks. Stable packages carry `hardware_validated: true` only after the recorded
+acceptance gate. The control scripts come from main; packaged source and docs
+come from the accepted commit. The existing asset layout remains a tarball,
+`release.json`, and `SHA256SUMS`.
+
+Immediately before building, before upload, and after upload verification, the
+workflow rechecks the parent, implementation merges, CI, and acceptance. It
+creates a draft, uploads and downloads the assets to verify checksums, then
+publishes with prerelease disabled and marks the stable release latest. Release
+notes link the parent and acceptance record and include generated change notes.
+
+Stable runs serialize, and a published version is never overwritten. Repeated
+events skip a matching published version. A failed upload leaves a resumable
+draft; rerun the workflow after correcting the failure. A conflicting tag,
+commit, release type, or published asset causes a failure rather than replacement.
+Changing the parent during a build invalidates the run. After publication,
+reopening issues cannot retract installed software; publish a new version for a
+correction.

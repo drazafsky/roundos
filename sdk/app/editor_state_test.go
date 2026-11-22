@@ -62,3 +62,44 @@ func TestSecureEditorStateClearsOnlyForItsOwnResult(t *testing.T) {
 		t.Fatal("matching canceled result did not clear editing state")
 	}
 }
+
+func TestNonsecureRequestIDCannotBeReusedForSecureEditor(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	peer.SetDeadline(time.Now().Add(3 * time.Second))
+	c := &Client{conn: conn, events: make(chan Event, 4), done: make(chan struct{})}
+	defer c.Close()
+	go c.readLoop()
+	seen := make(chan error, 1)
+	go func() { _, err := wire.Read(peer); seen <- err }()
+	if err := c.RequestText("shared", "Title", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-seen; err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RequestText("shared", "Password", "", true); err == nil {
+		t.Fatal("outstanding nonsecure ID reused for secure editor")
+	}
+	if c.SecureEditorActive() {
+		t.Fatal("rejected secure request changed editor state")
+	}
+	if err := wire.Write(peer, wire.Message{Version: wire.Version, Type: "text_result", TextResult: &wire.TextResult{ID: "shared", Canceled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.Events():
+	case <-time.After(3 * time.Second):
+		t.Fatal("prior result missing")
+	}
+	go func() { _, err := wire.Read(peer); seen <- err }()
+	if err := c.RequestText("shared", "Password", "", true); err != nil {
+		t.Fatal("ID not reusable after prior result", err)
+	}
+	if err := <-seen; err != nil {
+		t.Fatal(err)
+	}
+	if !c.SecureEditorActive() {
+		t.Fatal("secure request not tracked after safe reuse")
+	}
+}

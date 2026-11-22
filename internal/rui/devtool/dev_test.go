@@ -127,3 +127,33 @@ while True:
 		t.Fatal("SSH process was not reaped")
 	}
 }
+
+func TestIdleAgentCancellationUnblocksFrameRead(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Agent(ctx, "/unused/session.json", reader, io.Discard) }()
+	// Let the agent consume part of a frame header, then cancel while its
+	// ReadFull is waiting for the remaining bytes.
+	wrote := make(chan error, 1)
+	go func() { _, err := writer.Write([]byte{0}); wrote <- err }()
+	select {
+	case err := <-wrote:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("agent did not start its frame read")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("idle dev agent did not exit on cancellation")
+	}
+}

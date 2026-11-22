@@ -51,6 +51,7 @@ type Client struct {
 	once         sync.Once
 	last         *wire.View
 	secureEditor string
+	textRequests map[string]bool
 }
 
 func Connect() (*Client, error) {
@@ -92,6 +93,7 @@ func (c *Client) readLoop() {
 		}
 		if msg.Type == "text_result" && msg.TextResult != nil {
 			c.mu.Lock()
+			delete(c.textRequests, msg.TextResult.ID)
 			if c.secureEditor == msg.TextResult.ID {
 				c.secureEditor = ""
 			}
@@ -165,7 +167,19 @@ func (c *Client) RequestText(id, label, initial string, secure bool) error {
 	if c.secureEditor != "" {
 		return errors.New("another secure text request is still active")
 	}
+	if c.textRequests[id] {
+		return errors.New("text request ID is still outstanding")
+	}
+	if len(c.textRequests) >= 64 {
+		return errors.New("too many outstanding text requests")
+	}
 	err := wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
+	if err == nil {
+		if c.textRequests == nil {
+			c.textRequests = make(map[string]bool)
+		}
+		c.textRequests[id] = true
+	}
 	if err == nil && secure {
 		c.secureEditor = id
 	}

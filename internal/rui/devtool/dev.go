@@ -32,9 +32,26 @@ func (s LocalSender) Close() error { return nil }
 // Agent bridges a persistent SSH stdio stream to a same-user private app
 // session. Neither this process nor the remote app parses developer YAML.
 func Agent(ctx context.Context, session string, input io.Reader, output io.Writer) error {
+	// Production uses stdin/stdout files. Closing their descriptors unblocks
+	// an idle frame read or stalled response write when SIGTERM cancels ctx.
+	stop := context.AfterFunc(ctx, func() {
+		if closer, ok := input.(io.Closer); ok {
+			closer.Close()
+		}
+		if closer, ok := output.(io.Closer); ok {
+			closer.Close()
+		}
+	})
+	defer stop()
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 		var request devproto.Request
 		if err := devproto.Read(input, &request); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
@@ -49,6 +66,9 @@ func Agent(ctx context.Context, session string, input io.Reader, output io.Write
 			response.Error = err.Error()
 		}
 		if err := devproto.Write(output, response); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return err
 		}
 	}

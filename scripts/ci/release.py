@@ -103,7 +103,8 @@ def verify_assets(output, release_version, sha, *, stable=False):
     if stable and '-' in release_version:
         raise ValueError('Stable publication requires a stable version')
     name = f'roundos-{release_version}-linux-armv7'
-    expected = {name + '.tar.gz', 'release.json'}
+    all_assets = asset_names(release_version)
+    expected = all_assets - {'SHA256SUMS'}
     rows = (output / 'SHA256SUMS').read_text().splitlines()
     checksums = {}
     for row in rows:
@@ -132,7 +133,7 @@ def verify_assets(output, release_version, sha, *, stable=False):
             checksum, path = row.split('  ', 1)
             if hashlib.sha256(read(path)).hexdigest() != checksum:
                 raise ValueError(f'Archive checksum mismatch: {path}')
-    return sorted(expected | {'SHA256SUMS'})
+    return sorted(all_assets)
 
 
 def gh(*args):
@@ -148,6 +149,17 @@ def api(path, missing_ok=False):
     return json.loads(result.stdout)
 
 
+def stable_tag_sha(prefix, tag):
+    reference = api(f'{prefix}/git/ref/tags/{tag}', missing_ok=True)
+    if reference is None:
+        return None
+    return api(f'{prefix}/commits/refs/tags/{tag}')['sha']
+
+
+def asset_names(version):
+    return {f'roundos-{version}-linux-armv7.tar.gz', 'release.json', 'SHA256SUMS'}
+
+
 def publish(output, release_version, sha, *, stable=False, notes=None, before_publish=None):
     assets = verify_assets(output, release_version, sha, stable=stable)
     repo = os.environ['GH_REPO']
@@ -161,9 +173,12 @@ def publish(output, release_version, sha, *, stable=False, notes=None, before_pu
         release = next((item for page in pages for item in page if item['tag_name'] == tag), None)
     # GitHub returns 422, not 404, for a nonexistent commit ref. Probe the
     # tag endpoint first so genuine validation/API failures are never hidden.
-    reference = api(f'{prefix}/git/ref/tags/{tag}', missing_ok=True)
-    commit = api(f'{prefix}/commits/{tag}') if reference else None
-    if commit and commit['sha'] != sha:
+    if stable:
+        tag_sha = stable_tag_sha(prefix, tag)
+    else:
+        reference = api(f'{prefix}/git/ref/tags/{tag}', missing_ok=True)
+        tag_sha = api(f'{prefix}/commits/{tag}')['sha'] if reference else None
+    if tag_sha and tag_sha != sha:
         raise ValueError('Existing tag points at a different commit')
     if release:
         if release['target_commitish'] != sha or release['prerelease'] != (not stable):
@@ -171,7 +186,7 @@ def publish(output, release_version, sha, *, stable=False, notes=None, before_pu
         if not {a['name'] for a in release['assets']} <= set(assets):
             raise ValueError('Existing draft contains unexpected assets')
         if not release['draft']:
-            if not commit or {a['name'] for a in release['assets']} != set(assets):
+            if not tag_sha or {a['name'] for a in release['assets']} != set(assets):
                 raise ValueError('Published release is incomplete')
             with tempfile.TemporaryDirectory() as tmp:
                 gh('release', 'download', tag, '--dir', tmp)
@@ -208,9 +223,12 @@ def publish(output, release_version, sha, *, stable=False, notes=None, before_pu
     kind = ['--prerelease=false', '--latest'] if stable else ['--prerelease', '--latest=false']
     if before_publish:
         before_publish()
+    if stable and stable_tag_sha(prefix, tag) not in (None, sha):
+        raise ValueError('Stable tag changed before publication')
     gh('release', 'edit', tag, '--draft=false', *kind)
     # Confirm GitHub created the tag at the exact tested merge commit.
-    if api(f'{prefix}/commits/{tag}')['sha'] != sha:
+    published_sha = stable_tag_sha(prefix, tag) if stable else api(f'{prefix}/commits/{tag}')['sha']
+    if published_sha != sha:
         raise ValueError('Published tag does not match tested commit')
     print(f'Published {tag}' + ('' if stable else '; hardware acceptance remains pending'))
 

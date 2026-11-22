@@ -114,6 +114,10 @@ of a closing PR. Such issues must also be maintainer-authored. The designated
 physical acceptance issue does not need a PR. Grouping issues can have children
 instead of a closing PR.
 
+A release parent can contain up to 45 descendants. The workflow also limits API
+reads per reconciliation so large issue or PR histories cannot exhaust the
+Actions token's quota. Discovery logs show when a limit prevents a release.
+
 After testing, a maintainer with current repository write access records a
 comment on the acceptance issue with this block:
 
@@ -171,7 +175,8 @@ publishes with prerelease disabled and marks the stable release latest. Release
 notes link the parent and acceptance record and include generated change notes.
 
 Stable runs serialize, and a published version is never overwritten. Repeated
-events skip a matching published version. A failed upload leaves a resumable
+events verify the existing tag and expected asset names before skipping a
+published version. A failed upload leaves a resumable
 draft; rerun the workflow after correcting the failure. A conflicting tag,
 commit, release type, or published asset causes a failure rather than replacement.
 Changing the parent during a build invalidates the run. After publication,

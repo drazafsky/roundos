@@ -46,6 +46,8 @@ class Fixture:
             'evidence': f'https://github.com/{REPO}/issues/3#issuecomment-123'}),
             'user': {'login': 'maintainer'}, 'html_url': f'https://github.com/{REPO}/issues/3#issuecomment-456'}]
         self.releases = []
+        self.published = None
+        self.tag_sha = SHA
         self.excluded = set()
         self.ci = True
         self.source_version = VERSION
@@ -59,6 +61,12 @@ class Fixture:
         return (ancestor, descendant) not in self.excluded
 
     def get(self, path, *, missing_ok=False):
+        if path.startswith('releases/tags/'):
+            return self.published
+        if path.startswith('git/ref/tags/'):
+            return {} if self.tag_sha else None
+        if path.startswith('commits/refs/tags/'):
+            return {'sha': self.tag_sha}
         if path.startswith('contents/.github/workflows?'):
             return self.main_workflows if path.endswith('=main') else self.source_workflows
         if path.startswith('contents/VERSION?'):
@@ -203,25 +211,35 @@ class EligibilityTests(unittest.TestCase):
             self.ready()
 
     def test_discovery_skips_blocked_and_already_published_parents(self):
-        with mock.patch.object(stable.release, 'api', return_value=None):
-            self.assertEqual(len(stable.candidates(self.github)), 1)
-            self.github.ci = False
-            self.assertEqual(stable.candidates(self.github), [])
+        self.assertEqual(len(stable.candidates(self.github)), 1)
+        self.github.ci = False
+        self.assertEqual(stable.candidates(self.github), [])
         self.github.ci = True
-        with mock.patch.object(stable.release, 'api', return_value={
-                'draft': False, 'prerelease': False, 'target_commitish': SHA}):
+        self.github.published = {'draft': False, 'prerelease': False, 'target_commitish': SHA,
+                                 'assets': [{'name': name} for name in stable.release.asset_names(VERSION)]}
+        for tag_sha, expected in [(SHA, 'already published'), (MERGE, 'different commit'), (None, 'different commit')]:
+            self.github.tag_sha = tag_sha
+            with self.subTest(tag_sha=tag_sha), mock.patch.object(sys, 'stderr') as stderr:
+                self.assertEqual(stable.candidates(self.github), [])
+                self.assertTrue(any(expected in str(call) for call in stderr.write.call_args_list))
+        self.github.tag_sha = SHA
+        self.github.published['assets'].pop()
+        with mock.patch.object(sys, 'stderr') as stderr:
             self.assertEqual(stable.candidates(self.github), [])
+            self.assertTrue(any('missing or unexpected assets' in str(call) for call in stderr.write.call_args_list))
 
     def test_publish_rechecks_declaration_and_passes_acceptance_notes(self):
         with tempfile.TemporaryDirectory() as temp:
             args = ['stable_release.py', 'publish', '--parent', '1', '--version', VERSION,
-                    '--sha', SHA, '--output', temp]
+                    '--sha', SHA, '--acceptance', self.github.comments[0]['html_url'], '--output', temp]
             with mock.patch.object(sys, 'argv', args), mock.patch.dict(os.environ, GH_REPO=REPO), \
-                    mock.patch.object(stable, 'GitHub', return_value=self.github), \
+                    mock.patch.object(stable, 'GitHub', return_value=self.github) as client, \
                     mock.patch.object(stable.release, 'publish') as publish:
                 stable.main()
                 self.assertTrue(publish.call_args.kwargs['stable'])
                 self.assertIn(self.github.comments[0]['html_url'], publish.call_args.kwargs['notes'])
+                publish.call_args.kwargs['before_publish']()
+                self.assertEqual(client.call_count, 2)
                 publish.reset_mock()
                 self.github.ci = False
                 with self.assertRaises(stable.Blocked):
@@ -232,9 +250,23 @@ class EligibilityTests(unittest.TestCase):
                 with self.assertRaisesRegex(stable.Blocked, 'declaration changed'):
                     stable.main()
                 publish.assert_not_called()
+                args[args.index('0.6.1')] = VERSION
+                self.github.comments[0]['html_url'] += '7'
+                with self.assertRaisesRegex(stable.Blocked, 'Acceptance changed'):
+                    stable.main()
+                publish.assert_not_called()
 
 
 class GitHubTests(unittest.TestCase):
+    def test_caps_api_reads(self):
+        github = stable.GitHub(REPO)
+        github.reads_left = 2
+        with mock.patch.object(stable.release, 'gh', return_value='[[],[]]'), \
+                mock.patch.object(stable.release, 'api') as api:
+            github.pages('issues')
+            with self.assertRaisesRegex(stable.Blocked, 'API request budget'):
+                github.get('issues/1')
+            api.assert_not_called()
     def test_noncollaborator_is_untrusted_rather_than_failing_discovery(self):
         with mock.patch.object(stable.release, 'api', return_value=None) as api:
             self.assertFalse(stable.GitHub(REPO).trusted('outsider'))

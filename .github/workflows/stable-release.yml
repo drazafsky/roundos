@@ -70,6 +70,7 @@ jobs:
       actions: read
     env:
       RELEASE_PARENT: ${{ matrix.parent }}
+      RELEASE_ACCEPTANCE: ${{ matrix.acceptance }}
       ROUNDOS_VERSION: ${{ matrix.version }}
       ROUNDOS_BUILD_ID: ${{ matrix.sha }}
     steps:
@@ -82,7 +83,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: python3 automation/scripts/ci/stable_release.py check --parent "$RELEASE_PARENT" --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID"
+        run: python3 automation/scripts/ci/stable_release.py check --parent "$RELEASE_PARENT" --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID" --acceptance "$RELEASE_ACCEPTANCE"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ matrix.sha }}
@@ -115,4 +116,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: python3 automation/scripts/ci/stable_release.py publish --parent "$RELEASE_PARENT" --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID" --output source/dist-stable
+        run: python3 automation/scripts/ci/stable_release.py publish --parent "$RELEASE_PARENT" --version "$ROUNDOS_VERSION" --sha "$ROUNDOS_BUILD_ID" --acceptance "$RELEASE_ACCEPTANCE" --output source/dist-stable

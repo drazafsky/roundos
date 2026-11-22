@@ -97,7 +97,8 @@ class ReleaseTests(unittest.TestCase):
             if '/releases/tags/' in path:
                 return published if existing and not draft else None
             if '/git/ref/tags/' in path:
-                return {'ref': 'refs/tags/v' + version} if (existing and not draft) or wrong_commit else None
+                promoted = ('release', 'edit') in [call[:2] for call in calls if '--draft=false' in call]
+                return {'ref': 'refs/tags/v' + version} if (existing and not draft) or wrong_commit or promoted else None
             return {'sha': 'b' * 40 if wrong_commit else SHA}
         def gh(*args):
             calls.append(args)
@@ -200,6 +201,21 @@ class ReleaseTests(unittest.TestCase):
                 release.publish(self.output, '0.6.0', SHA, stable=True,
                                 before_publish=mock.Mock(side_effect=ValueError('Acceptance revoked')))
         self.assertNotIn(('release', 'edit'), [call[:2] for call in calls])
+
+    def test_tag_created_during_upload_cannot_point_at_another_commit(self):
+        calls, api, gh = self.publish_fixture(stable=True)
+        def tag_appears(path, missing_ok=False):
+            if ('release', 'upload') in [call[:2] for call in calls]:
+                if '/git/ref/tags/' in path:
+                    return {'ref': 'refs/tags/v0.6.0'}
+                if '/commits/refs/tags/' in path:
+                    return {'sha': 'b' * 40}
+            return api(path, missing_ok=missing_ok)
+        with mock.patch.object(release, 'api', side_effect=tag_appears), mock.patch.object(release, 'gh', side_effect=gh), \
+                mock.patch.dict(os.environ, GH_REPO='owner/repo'):
+            with self.assertRaisesRegex(ValueError, 'Stable tag changed'):
+                release.publish(self.output, '0.6.0', SHA, stable=True)
+        self.assertFalse(any('--draft=false' in call for call in calls))
 
     def test_resumed_stable_draft_refreshes_acceptance_and_preserves_change_notes(self):
         calls, api, gh = self.publish_fixture(stable=True, existing=True, draft=True)

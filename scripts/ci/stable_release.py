@@ -12,7 +12,8 @@ import release
 
 LABEL = 'release:stable'
 MANUAL_LABEL = 'release:verification'
-MAX_ISSUES = 500
+MAX_ISSUES = 46  # One parent plus at most 45 descendants.
+MAX_API_READS = 240  # Budget per eligibility pass, including discovery across candidates.
 
 
 class Blocked(ValueError):
@@ -41,14 +42,22 @@ class GitHub:
         self.repo = repo
         self.prefix = f'repos/{repo}'
         self.permissions = {}
+        self.reads_left = MAX_API_READS
+
+    def reserve_reads(self, count=1):
+        block(self.reads_left >= count, 'Release reconciliation exceeded its API request budget')
+        self.reads_left -= count
 
     def get(self, path, *, missing_ok=False):
+        self.reserve_reads()
         return release.api(f'{self.prefix}/{path}', missing_ok=missing_ok)
 
-    def pages(self, path):
+    def pages(self, path, *, key=None):
+        self.reserve_reads()
         separator = '&' if '?' in path else '?'
         pages = json.loads(release.gh('api', f'{self.prefix}/{path}{separator}per_page=100', '--paginate', '--slurp'))
-        return [item for page in pages for item in page]
+        self.reserve_reads(max(0, len(pages) - 1))
+        return [item for page in pages for item in (page[key] if key else page)]
 
     def trusted(self, login):
         if login not in self.permissions:
@@ -62,6 +71,7 @@ class GitHub:
         return comparison['status'] in ('ahead', 'identical')
 
     def closing_prs(self, number):
+        self.reserve_reads()
         owner, name = self.repo.split('/')
         query = '''query($owner:String!,$name:String!,$number:Int!) {
           repository(owner:$owner,name:$name) { issue(number:$number) {
@@ -87,10 +97,7 @@ class GitHub:
         run = max(runs, key=lambda item: (item['run_number'], item['run_attempt']))
         block(run['head_sha'] == sha and run['event'] == 'push' and run['head_branch'] == 'main'
               and run['status'] == 'completed' and run['conclusion'] == 'success', 'Main CI is pending or failed')
-        # This endpoint wraps its list in a jobs object, unlike issue endpoints.
-        pages = json.loads(release.gh('api', f'{self.prefix}/actions/runs/{run["id"]}/jobs?filter=latest&per_page=100',
-                                     '--paginate', '--slurp'))
-        jobs = {job['name']: job['conclusion'] for page in pages for job in page['jobs']}
+        jobs = {job['name']: job['conclusion'] for job in self.pages(f'actions/runs/{run["id"]}/jobs?filter=latest', key='jobs')}
         block(all(jobs.get(name) == 'success' for name in
                   ('Tests', 'Host DRM build', 'ARMv7 build and package')), 'Required CI jobs did not pass')
 
@@ -189,9 +196,14 @@ def candidates(github):
             continue
         try:
             plan = eligibility(github, issue['number'])
-            existing = release.api(f'{github.prefix}/releases/tags/v{plan["version"]}', missing_ok=True)
+            tag = 'v' + plan['version']
+            existing = github.get(f'releases/tags/{tag}', missing_ok=True)
             if existing and not existing['draft']:
                 block(not existing['prerelease'] and existing['target_commitish'] == plan['sha'], 'Existing release identity differs')
+                block(github.get(f'git/ref/tags/{tag}', missing_ok=True) is not None
+                      and github.get(f'commits/refs/tags/{tag}')['sha'] == plan['sha'], 'Published tag points at a different commit')
+                block({asset['name'] for asset in existing['assets']} == release.asset_names(plan['version']),
+                      'Published stable release has missing or unexpected assets')
                 print(f'#{issue["number"]}: already published', file=sys.stderr)
                 continue
             ready.append(plan)
@@ -210,26 +222,26 @@ def main():
         child.add_argument('--parent', type=int, required=True)
         child.add_argument('--version', required=True)
         child.add_argument('--sha', required=True)
+        child.add_argument('--acceptance', required=True)
         if command == 'publish':
             child.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    github = GitHub(os.environ['GH_REPO'])
+    repo = os.environ['GH_REPO']
     if args.command == 'discover':
-        plans = candidates(github)
+        plans = candidates(GitHub(repo))
         block(len(plans) <= 256, 'Too many release parents for an Actions matrix')
         args.output.write_text(json.dumps({'include': plans}))
     else:
         def check():
-            plan = eligibility(github, args.parent)
+            plan = eligibility(GitHub(repo), args.parent)
             block(plan['version'] == args.version and plan['sha'] == args.sha, 'Release declaration changed during the run')
+            block(plan['acceptance'] == args.acceptance, 'Acceptance changed during the run')
             return plan
         plan = check()
         if args.command == 'publish':
-            def recheck():
-                block(check() == plan, 'Acceptance changed during the run')
             release.publish(args.output, args.version, args.sha, stable=True,
-                            notes=f'Stable ARMv7 release. Release parent: https://github.com/{github.repo}/issues/{args.parent}\n'
-                                  f'Physical Pi acceptance: {plan["acceptance"]}', before_publish=recheck)
+                            notes=f'Stable ARMv7 release. Release parent: https://github.com/{repo}/issues/{args.parent}\n'
+                                  f'Physical Pi acceptance: {plan["acceptance"]}', before_publish=check)
 
 
 if __name__ == '__main__':

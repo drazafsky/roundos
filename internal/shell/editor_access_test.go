@@ -94,6 +94,28 @@ func TestSecureEditorClearsOnShellInterrupt(t *testing.T) {
 		t.Fatalf("result: %s %+v", app, result)
 	}
 }
+
+func TestNonsecureEditorInterruptCancelsRequestBeforeReopening(t *testing.T) {
+	m := New()
+	m.Select(Clock)
+	request := wire.TextRequest{ID: "title", Initial: "Original"}
+	if !m.OpenAppEditor(wire.ClockID, request) {
+		t.Fatal("initial editor did not open")
+	}
+	m.Editor.Insert(" draft")
+	m.OpenNotifications()
+	app, result := m.TakeTextResult()
+	if app != wire.ClockID || result == nil || result.ID != "title" || !result.Canceled || result.Value != "" {
+		t.Fatalf("interrupted nonsecure request not canceled: %s %+v", app, result)
+	}
+	if _, result := m.TakeTextResult(); result != nil {
+		t.Fatal("canceled result repeated")
+	}
+	m.Select(Clock)
+	if !m.OpenAppEditor(wire.ClockID, request) || m.Editor.Draft != "Original" {
+		t.Fatal("editor did not reopen with authoritative app value")
+	}
+}
 func TestAppearanceRecolorsAllShellViews(t *testing.T) {
 	m := New()
 	m.Select(Clock)

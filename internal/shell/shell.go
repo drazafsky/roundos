@@ -162,10 +162,10 @@ func (m *Model) Select(page int) bool {
 		m.WiFi.EditorPurpose = ""
 		if m.Editor.Secure {
 			m.Editor.ClearSensitive()
-			if m.EditorAppID != "" && m.PendingEditorResult == nil {
-				m.PendingEditorResult = &wire.TextResult{ID: m.EditorRequestID, Canceled: true}
-				m.PendingEditorApp = m.EditorAppID
-			}
+		}
+		if m.EditorAppID != "" && m.PendingEditorResult == nil {
+			m.PendingEditorResult = &wire.TextResult{ID: m.EditorRequestID, Canceled: true}
+			m.PendingEditorApp = m.EditorAppID
 		}
 	}
 	if page != m.Page {

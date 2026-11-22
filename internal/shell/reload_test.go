@@ -111,3 +111,27 @@ func TestReloadDetachesDragAndPreservesCompatibleDraft(t *testing.T) {
 		t.Fatal("canceled finger committed the retained draft")
 	}
 }
+
+func TestReloadRemovingParentCancelsUnchangedChildInput(t *testing.T) {
+	m := New()
+	v := ui.View{Screens: []ui.ScreenSpec{
+		ui.Screen("root", "Root", "", "", ui.Button("a", "A", "a")),
+		ui.Screen("child", "Child", "", "", ui.NumberPicker("pick", "Pick", "set", 3, 0, 10, 1)),
+	}}
+	m.SetView(wire.ClockID, v)
+	m.Select(Clock)
+	if !m.enterScreen("child") {
+		t.Fatal("cannot enter fixture child")
+	}
+	m.PickerID, m.PickerValue = "pick", 7
+	m.EditingWidget, m.TouchSlider = "pick", "pick"
+	revision := m.InputRevision
+	// The active child remains unchanged in the view, but its parent is
+	// removed. Navigation falls back to the new root instead of the child.
+	v.Screens[0].ID = "new-root"
+	m.SetView(wire.ClockID, v)
+	screen, _ := m.CurrentScreen(Clock)
+	if screen.ID != "new-root" || m.InputRevision == revision || m.PickerID != "" || m.EditingWidget != "" || m.TouchSlider != "" {
+		t.Fatalf("orphaned child input survived navigation fallback: screen=%s picker=%s edit=%s", screen.ID, m.PickerID, m.EditingWidget)
+	}
+}

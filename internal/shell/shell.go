@@ -192,10 +192,19 @@ func (m *Model) SetView(id string, v wire.View) bool {
 	if ok && reflect.DeepEqual(old, v) && status == "" {
 		return false
 	}
+	beforeScreen, hadScreen := m.CurrentScreen(page)
 	m.reconcileReplacement(page, old, v)
 	m.Views[page] = wire.CopyView(v)
 	m.syncNavigation(page)
 	if m.Page == page {
+		afterScreen, hasScreen := m.CurrentScreen(page)
+		if hadScreen != hasScreen || beforeScreen.ID != afterScreen.ID {
+			// Removing a parent can drop an otherwise unchanged child from
+			// the navigation stack. Its input and edits belong to that child.
+			m.cancelReloadContact()
+			m.cancelPicker()
+			m.cancelWidgetEdit()
+		}
 		m.syncDialog(page)
 	}
 	m.Status[page] = ""

@@ -187,8 +187,7 @@ func (m *Model) WidgetRotate(delta int) bool {
 	}
 	f.FocusID = s.Widgets[next].ID
 	f.Scroll = circleui.ScreenScrollTo(s, next, f.Scroll, m.Appearance.LargeTargets)
-	_, _, step, _ := circleui.ScreenMetrics(s, m.Appearance.LargeTargets)
-	f.ScrollPx = float64(f.Scroll * step)
+	f.ScrollPx = circleui.ScreenRowOffset(s, f.Scroll, m.Appearance.LargeTargets)
 	m.StopKinetic()
 	return true
 }
@@ -352,8 +351,7 @@ func (m *Model) AdvanceKinetic(now time.Time) bool {
 	next := old + m.KineticVelocity*dt
 	maxPx := circleui.ScreenMaxScrollPx(s, m.Appearance.LargeTargets)
 	f.ScrollPx = math.Max(0, math.Min(maxPx, next))
-	_, _, step, _ := circleui.ScreenMetrics(s, m.Appearance.LargeTargets)
-	f.Scroll = int(f.ScrollPx / float64(step))
+	f.Scroll = circleui.ScreenScrollIndex(s, f.ScrollPx, m.Appearance.LargeTargets)
 	speed := math.Abs(m.KineticVelocity) - 2200*dt
 	if speed <= 0 || now.After(m.KineticUntil) || (f.ScrollPx == old && next != old) {
 		m.StopKinetic()
@@ -417,8 +415,7 @@ func (m *Model) WidgetDragMoveAt(x, y int, deltaY float64, at time.Time) bool {
 	}
 	old := f.ScrollPx
 	f.ScrollPx = math.Max(0, math.Min(maxPx, m.DragOriginPx-deltaY))
-	_, _, step, _ := circleui.ScreenMetrics(s, m.Appearance.LargeTargets)
-	f.Scroll = int(f.ScrollPx / float64(step))
+	f.Scroll = circleui.ScreenScrollIndex(s, f.ScrollPx, m.Appearance.LargeTargets)
 	if !m.DragLastAt.IsZero() {
 		dt := at.Sub(m.DragLastAt).Seconds()
 		if dt >= 0.004 && dt <= 0.20 {
@@ -526,6 +523,16 @@ func drawWidgetScreen(im *image.RGBA, m *Model) {
 	rows := m.visibleWidgets()
 	focus := m.CurrentFocus(m.Page)
 	for _, r := range rows {
+		im := im
+		if s.Layout != "" {
+			bounds := image.Rect(r.Rect.Left-3, r.Rect.Top-3, r.Rect.Right+3, r.Rect.Bottom+3)
+			_, _, _, height := circleui.ScreenMetrics(s, m.Appearance.LargeTargets)
+			if r.Rect.Bottom-r.Rect.Top < height {
+				bounds.Min.Y = r.Rect.Top
+				bounds.Max.Y = r.Rect.Bottom
+			}
+			im = im.SubImage(bounds).(*image.RGBA)
+		}
 		w := s.Widgets[r.Index]
 		focused := r.Index == focus
 		fill := p.Surface

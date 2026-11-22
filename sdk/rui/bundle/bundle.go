@@ -1,5 +1,5 @@
-// Package bundle defines the deterministic, size-bounded RUI v1 production
-// artifact format. It is public so independent SDK applications can embed and
+// Package bundle defines the deterministic, size-bounded RUI production
+// artifact formats. It is public so independent SDK applications can embed and
 // decode compiled layouts without importing any RoundOS internal packages.
 // Decoding authenticates file integrity; it does NOT authorize application IDs
 // or execute bindings/handlers. M3 must check the trusted application identity.

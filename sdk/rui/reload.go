@@ -115,14 +115,14 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	if needsClear && view.Dialog != nil && lastView != nil && lastView.Dialog != nil {
 		cleared := *lastView
 		cleared.Dialog = nil
-		if err := r.publish(cleared); err != nil {
+		if err := r.publishReplacement(ctx, cleared); err != nil {
 			return err
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := r.publish(view); err != nil {
+	if err := r.publishReplacement(ctx, view); err != nil {
 		return err
 	}
 	r.mu.Lock()

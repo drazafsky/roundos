@@ -3,7 +3,6 @@ package wire
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"unicode/utf8"
 )
 
@@ -37,6 +36,7 @@ func SelectCapabilities(offer []string) []string {
 // PropertyUpdate is deliberately typed and excludes actions, identities and
 // layout. Those changes require a new authoritative snapshot.
 type PropertyUpdate struct {
+	Dialog   string  `json:"dialog,omitempty"`
 	Screen   string  `json:"screen,omitempty"`
 	Widget   string  `json:"widget,omitempty"`
 	Property string  `json:"property"`
@@ -136,8 +136,22 @@ func DiffProperties(before, after View) ([]PropertyUpdate, bool) {
 			updates = append(updates, PropertyUpdate{Screen: screen, Widget: widget, Property: property, String: &value})
 		}
 	}
-	if before.ButtonAction != after.ButtonAction || before.RotaryAction != after.RotaryAction || !reflect.DeepEqual(before.Dialog, after.Dialog) || len(before.Screens) != len(after.Screens) {
+	if before.ButtonAction != after.ButtonAction || before.RotaryAction != after.RotaryAction || (before.Dialog == nil) != (after.Dialog == nil) || len(before.Screens) != len(after.Screens) {
 		return nil, false
+	}
+	if before.Dialog != nil {
+		a, b := *before.Dialog, *after.Dialog
+		fields := []struct{ property, a, b string }{{"title", a.Title, b.Title}, {"body", a.Body, b.Body}, {"cancel", a.Cancel, b.Cancel}, {"confirm", a.Confirm, b.Confirm}}
+		for _, field := range fields {
+			if field.a != field.b {
+				value := field.b
+				updates = append(updates, PropertyUpdate{Dialog: b.ID, Property: field.property, String: &value})
+			}
+		}
+		a.Title, a.Body, a.Cancel, a.Confirm = b.Title, b.Body, b.Cancel, b.Confirm
+		if a != b {
+			return nil, false
+		}
 	}
 	text("", "", "title", before.Title, after.Title)
 	text("", "", "primary", before.Primary, after.Primary)
@@ -184,9 +198,9 @@ func ApplyProperties(current View, updates []PropertyUpdate) (View, error) {
 		return View{}, fmt.Errorf("invalid property batch length")
 	}
 	next := CopyView(current)
-	seen := map[[3]string]bool{}
+	seen := map[[4]string]bool{}
 	for _, u := range updates {
-		key := [3]string{u.Screen, u.Widget, u.Property}
+		key := [4]string{u.Dialog, u.Screen, u.Widget, u.Property}
 		if seen[key] {
 			return View{}, fmt.Errorf("duplicate property target")
 		}
@@ -206,7 +220,27 @@ func ApplyProperties(current View, updates []PropertyUpdate) (View, error) {
 		}
 		var str *string
 		limit := 240
-		if u.Screen == "" {
+		if u.Dialog != "" {
+			if u.Screen != "" || u.Widget != "" || next.Dialog == nil || next.Dialog.ID != u.Dialog {
+				return View{}, fmt.Errorf("unknown dialog target")
+			}
+			switch u.Property {
+			case "title":
+				str = &next.Dialog.Title
+				limit = 80
+			case "body":
+				str = &next.Dialog.Body
+			case "cancel":
+				str = &next.Dialog.Cancel
+				limit = 40
+			case "confirm":
+				str = &next.Dialog.Confirm
+				limit = 40
+			}
+			if (u.Property == "cancel" || u.Property == "confirm") && u.String != nil && *u.String == "" {
+				return View{}, fmt.Errorf("empty dialog action label")
+			}
+		} else if u.Screen == "" {
 			if u.Widget != "" {
 				return View{}, fmt.Errorf("widget requires a screen")
 			}

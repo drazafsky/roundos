@@ -7,6 +7,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"roundos/internal/wire"
@@ -61,6 +62,7 @@ type Client struct {
 	events                chan Event
 	done                  chan struct{}
 	once                  sync.Once
+	closed                atomic.Bool
 	last                  *wire.View
 	secureEditor          string
 	textRequests          map[string]bool
@@ -70,10 +72,8 @@ type Client struct {
 	selected              bool
 	legacy                *wire.View
 	acked, sent           *wire.View
-	transition, confirmed *wire.View
-	confirmation          chan struct{}
+	transition            *wire.View
 	sentTransition        bool
-	sentConfirmed         bool
 	layout, revision      uint64
 	pending, forcePending bool
 	ackTimer              *time.Timer
@@ -279,4 +279,7 @@ func (c *Client) AcknowledgeTextResult(id string) {
 	delete(c.editorResults, id)
 	c.mu.Unlock()
 }
-func (c *Client) Close() error { c.once.Do(func() { c.conn.Close() }); return nil }
+func (c *Client) Close() error {
+	c.once.Do(func() { c.closed.Store(true); c.conn.Close() })
+	return nil
+}

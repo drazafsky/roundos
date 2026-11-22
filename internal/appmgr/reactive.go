@@ -32,6 +32,9 @@ func (s *retainedView) accept(msg wire.Message) (wire.View, bool) {
 		if err != nil {
 			return wire.View{}, false
 		}
+		if !wire.MessageFits(wire.Message{Version: wire.Version, Type: "view", View: &next, LayoutRevision: msg.LayoutRevision, NewRevision: 1}) {
+			return wire.View{}, false
+		}
 	default:
 		return next, false
 	}

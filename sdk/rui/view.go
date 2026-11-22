@@ -1,6 +1,7 @@
 package rui
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,22 @@ import (
 // stateSnapshot is an immutable set of binding getter functions captured at Flush.
 // Getters are invoked only by the calling application's Flush goroutine.
 type stateSnapshot map[string]binding
+
+func (r *Runtime) publishReplacement(ctx context.Context, view ui.View) error {
+	if publisher, ok := r.publisher.(interface {
+		PublishSnapshot(context.Context, ui.View) error
+	}); ok {
+		if err := publisher.PublishSnapshot(ctx, view); err != nil {
+			return err
+		}
+		copy := wire.CopyView(view)
+		r.mu.Lock()
+		r.lastView = &copy
+		r.mu.Unlock()
+		return nil
+	}
+	return r.publish(view)
+}
 
 func (r *Runtime) publish(view ui.View) error {
 	r.mu.Lock()

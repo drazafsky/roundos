@@ -22,6 +22,9 @@ func (c *Client) Supports(capability string) bool {
 }
 
 func (c *Client) LayoutRevision() uint64 {
+	if c.closed.Load() {
+		return 0
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.layout
@@ -36,7 +39,11 @@ func (c *Client) writeLocked(msg wire.Message) error {
 		return err
 	}
 	defer c.conn.SetWriteDeadline(time.Time{})
-	return wire.Write(c.conn, msg)
+	err := wire.Write(c.conn, msg)
+	if err != nil {
+		c.Close()
+	}
+	return err
 }
 
 func (c *Client) validateDesiredLocked(view wire.View) error {
@@ -70,11 +77,11 @@ func (c *Client) setDesiredLocked(view wire.View) {
 	c.last = &v
 }
 
-// PublishConfirmed waits for a negotiated acknowledgement. Development layout
-// replacement uses this barrier before activating its new action metadata.
-// An ambiguous failure closes the connection, preventing input against a tree
-// whose acknowledgement was lost. Legacy peers retain synchronous v7 writes.
-func (c *Client) PublishConfirmed(ctx context.Context, view wire.View) error {
+// PublishSnapshot synchronously writes a full replacement. A new layout
+// supersedes an older unacknowledged update, whose late ack is ignored. This
+// avoids waiting for control messages while the application's event loop is
+// applying a reload; ordinary Publish calls continue to coalesce behind ACKs.
+func (c *Client) PublishSnapshot(ctx context.Context, view wire.View) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -82,44 +89,48 @@ func (c *Client) PublishConfirmed(ctx context.Context, view wire.View) error {
 		return err
 	}
 	c.mu.Lock()
-	if c.confirmed != nil {
-		c.mu.Unlock()
-		return fmt.Errorf("another confirmed publication is pending")
-	}
+	defer c.mu.Unlock()
 	if err := c.validateDesiredLocked(view); err != nil {
-		c.mu.Unlock()
 		return err
 	}
-	c.setDesiredLocked(view)
 	if !c.reactiveLocked() {
+		c.legacy = nil
 		err := c.publishLegacyLocked(view)
-		c.mu.Unlock()
-		return err
-	}
-	confirmed := wire.CopyView(view)
-	c.confirmed = &confirmed
-	c.confirmation = make(chan struct{})
-	done := c.confirmation
-	err := c.publishNextLocked(true)
-	c.mu.Unlock()
-	if err != nil {
-		c.Close()
-		return err
-	}
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		select {
-		case <-done:
-			return nil
-		default:
+		if err == nil {
+			raw := wire.CopyView(view)
+			c.last = &raw
 		}
-		c.Close()
-		return ctx.Err()
-	case <-c.done:
-		return fmt.Errorf("connection closed before publication acknowledgement")
+		return err
 	}
+	if c.transition != nil && view.Dialog != nil {
+		if err := c.writeSnapshotLocked(ctx, *c.transition); err != nil {
+			return err
+		}
+	}
+	return c.writeSnapshotLocked(ctx, view)
+}
+
+func (c *Client) writeSnapshotLocked(ctx context.Context, view wire.View) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.layout == ^uint64(0) {
+		return fmt.Errorf("reactive revision exhausted")
+	}
+	raw := wire.CopyView(view)
+	view = c.transportViewLocked(wire.CopyView(view))
+	msg := wire.Message{Version: wire.Version, Type: "view", View: &view, LayoutRevision: c.layout + 1, NewRevision: 1}
+	if !wire.MessageFits(msg) {
+		return fmt.Errorf("replacement snapshot exceeds IPC frame")
+	}
+	if err := c.writeLocked(msg); err != nil {
+		c.Close()
+		return err
+	}
+	c.last = &raw
+	c.transition = nil
+	c.trackUpdateLocked(msg, view, false)
+	return nil
 }
 
 // PublishAuthoritative also publishes unchanged state, undoing rejected shell
@@ -153,8 +164,6 @@ func (c *Client) publishNextLocked(force bool) error {
 	transition := c.transition != nil
 	if transition {
 		view = wire.CopyView(*c.transition)
-	} else if c.confirmed != nil {
-		view = wire.CopyView(*c.confirmed)
 	}
 	view = c.transportViewLocked(view)
 	if !c.forcePending && c.acked != nil && reflect.DeepEqual(*c.acked, view) {
@@ -171,7 +180,8 @@ func (c *Client) publishNextLocked(force bool) error {
 	if !c.forcePending && c.acked != nil && wire.HasCapability(c.capabilities, wire.WidgetPatchV1) {
 		if updates, ok := wire.DiffProperties(*c.acked, view); ok && len(updates) > 0 && len(updates) <= wire.MaxPropertyUpdates {
 			patch := wire.Message{Version: wire.Version, Type: "widget_patch", LayoutRevision: c.layout, BaseRevision: c.revision, NewRevision: c.revision + 1, Updates: updates}
-			if wire.MessageFits(patch) {
+			_, valid := wire.ApplyProperties(*c.acked, updates)
+			if valid == nil && wire.MessageFits(patch) {
 				msg = patch
 			}
 		}
@@ -182,10 +192,14 @@ func (c *Client) publishNextLocked(force bool) error {
 	if err := c.writeLocked(msg); err != nil {
 		return err
 	}
+	c.trackUpdateLocked(msg, view, transition)
+	return nil
+}
+
+func (c *Client) trackUpdateLocked(msg wire.Message, view wire.View, transition bool) {
 	c.layout, c.revision = msg.LayoutRevision, msg.NewRevision
 	c.sent = &view
 	c.sentTransition = transition
-	c.sentConfirmed = !transition && c.confirmed != nil
 	if transition {
 		c.transition = nil
 	}
@@ -203,7 +217,6 @@ func (c *Client) publishNextLocked(force bool) error {
 			c.Close()
 		}
 	})
-	return nil
 }
 
 func (c *Client) handleControl(msg wire.Message) (bool, error) {
@@ -246,14 +259,8 @@ func (c *Client) handleControl(msg wire.Message) (bool, error) {
 		c.ackTimer.Stop()
 	}
 	c.acked = c.sent
-	if c.sentConfirmed && c.confirmed != nil && reflect.DeepEqual(*c.acked, c.transportViewLocked(*c.confirmed)) {
-		c.confirmed = nil
-		close(c.confirmation)
-		c.confirmation = nil
-	}
 	c.sent = nil
 	c.sentTransition = false
-	c.sentConfirmed = false
 	c.pending = false
 	return true, c.publishNextLocked(false)
 }

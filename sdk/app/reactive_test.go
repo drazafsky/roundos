@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -174,47 +176,36 @@ func TestDialogClearReopenSurvivesCoalescingAndResync(t *testing.T) {
 	ack(t, peer, reopen)
 }
 
-func TestConfirmedPublicationWaitsForItsOwnAcknowledgement(t *testing.T) {
+func TestReplacementSnapshotSupersedesUnacknowledgedUpdate(t *testing.T) {
 	c, peer := reactiveClient(t, wire.Capabilities())
 	view := appView("10")
 	first := publishAndRead(t, c, peer, view)
 	done := make(chan error, 1)
+	for range cap(c.events) {
+		c.events <- Event{Type: "gesture"}
+	}
+	if err := wire.Write(peer, wire.Message{Version: wire.Version, Type: "gesture", Gesture: &wire.Gesture{Kind: "down"}}); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	go func() { done <- c.PublishConfirmed(ctx, view) }()
-	// Synchronize with registration of the confirmation before the old ack.
-	deadline := time.Now().Add(time.Second)
-	for {
-		c.mu.Lock()
-		registered := c.confirmed != nil
-		c.mu.Unlock()
-		if registered {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("confirmation did not start")
-		}
-		time.Sleep(time.Millisecond)
+	go func() { done <- c.PublishSnapshot(ctx, view) }()
+	replacement := readAppMessage(t, peer)
+	if replacement.Type != "view" || replacement.LayoutRevision <= first.LayoutRevision {
+		t.Fatal(replacement)
 	}
-	ack(t, peer, first)
-	confirmed := readAppMessage(t, peer)
-	select {
-	case err := <-done:
-		t.Fatal("old ack completed new confirmation", err)
-	default:
-	}
-	if confirmed.Type != "view" || confirmed.LayoutRevision <= first.LayoutRevision {
-		t.Fatal(confirmed)
-	}
-	ack(t, peer, confirmed)
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("matching ack did not complete publication")
+		t.Fatal("replacement waited for an ack while the app loop was blocked")
 	}
+	<-c.events          // let the reader finish its blocked event before acknowledging
+	ack(t, peer, first) // ignored after the replacement supersedes this layout
+	ack(t, peer, replacement)
+	noAppMessage(t, peer)
 }
 
 func TestTemplateMetadataRequiresPeerSelection(t *testing.T) {
@@ -232,4 +223,38 @@ func TestTemplateMetadataRequiresPeerSelection(t *testing.T) {
 			ack(t, peer, msg)
 		}
 	}
+}
+
+func TestStaticLayoutTicksUsePatchesWithLowerTraffic(t *testing.T) {
+	c, peer := reactiveClient(t, wire.Capabilities())
+	view := appView("00:10")
+	view.Primary = "00:10"
+	view.Screens = append(view.Screens, wire.Screen{ID: "duration", Title: "Duration", Widgets: []wire.Widget{
+		{ID: "minutes", Kind: "slider", Label: "Minutes", Action: "set", Value: 5, Min: 0, Max: 999, Step: 1},
+		{ID: "picker", Kind: "picker", Label: "Set minutes", Action: "set", Value: 5, Min: 0, Max: 999, Step: 1},
+		{ID: "progress", Kind: "progress", Label: "Time remaining", Value: 5, Min: 0, Max: 999},
+		{ID: "reset", Kind: "button", Label: "Reset timer", Action: "reset"},
+	}})
+	initial := publishAndRead(t, c, peer, view)
+	ack(t, peer, initial)
+	oldBytes, newBytes := 0, 0
+	for second := 9; second >= 1; second-- {
+		view.Primary = fmt.Sprintf("00:%02d", second)
+		view.Screens[0].Hero = view.Primary
+		msg := publishAndRead(t, c, peer, view)
+		if msg.Type != "widget_patch" || msg.LayoutRevision != initial.LayoutRevision {
+			t.Fatal("ordinary tick retransmitted the tree", msg)
+		}
+		legacy := wire.WithoutTemplates(view)
+		full, _ := json.Marshal(wire.Message{Version: wire.Version, Type: "view", View: &legacy})
+		patch, _ := json.Marshal(msg)
+		response, _ := json.Marshal(wire.Message{Version: wire.Version, Type: "view_ack", LayoutRevision: msg.LayoutRevision, NewRevision: msg.NewRevision})
+		oldBytes += 4 + len(full)
+		newBytes += 8 + len(patch) + len(response)
+		ack(t, peer, msg)
+	}
+	if newBytes*2 > oldBytes {
+		t.Fatalf("traffic reduction below 50%% including acknowledgements: old=%d new=%d", oldBytes, newBytes)
+	}
+	t.Logf("representative tick traffic: full=%d bytes, negotiated=%d bytes including ACKs", oldBytes, newBytes)
 }

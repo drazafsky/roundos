@@ -62,3 +62,21 @@ func TestDetailWrappingBoundsAndTruncatesText(t *testing.T) {
 		}
 	}
 }
+
+func TestPartiallyVisibleFormControlsCannotPaintBelowViewport(t *testing.T) {
+	m := New()
+	screen := ui.Screen("root", "Form", "", "", ui.Toggle("a", "First", "a", true), ui.Toggle("b", "Second", "b", true), ui.Toggle("c", "Third", "c", true))
+	screen.Layout = "form"
+	m.SetView(wire.ClockID, ui.View{Screens: []ui.ScreenSpec{screen}})
+	m.Select(Clock)
+	m.AppStacks[Clock][0].ScrollPx = 30
+	img := Draw(m, time.Unix(0, 0))
+	background := m.Appearance.Palette().Background
+	for y := 347; y < 392; y++ {
+		for x := 200; x < 280; x++ {
+			if img.RGBAAt(x, y) != background {
+				t.Fatalf("partially clipped control painted outside viewport at %d,%d", x, y)
+			}
+		}
+	}
+}

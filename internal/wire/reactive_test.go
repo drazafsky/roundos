@@ -66,3 +66,23 @@ func TestCapabilitySelectionIsExplicit(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestDialogTextUsesAtomicPropertyUpdates(t *testing.T) {
+	before := reactiveView()
+	before.Dialog = &Dialog{ID: "confirm", Title: "Title", Body: "Before", Cancel: "No", Confirm: "Yes", CancelAction: "cancel", ConfirmAction: "confirm"}
+	after := CopyView(before)
+	after.Dialog.Title = "Changed"
+	after.Dialog.Body = "After"
+	updates, ok := DiffProperties(before, after)
+	if !ok || len(updates) != 2 || updates[0].Dialog != "confirm" {
+		t.Fatal("dialog text required a full tree", updates, ok)
+	}
+	next, err := ApplyProperties(before, updates)
+	if err != nil || !reflect.DeepEqual(next, after) || before.Dialog.Body != "Before" {
+		t.Fatal("dialog update was not atomic", err)
+	}
+	after.Dialog.ConfirmAction = "different"
+	if _, ok := DiffProperties(before, after); ok {
+		t.Fatal("dialog action changed through property patch")
+	}
+}

@@ -74,6 +74,15 @@ installs or activates anything on a device.
 
 ## Automatic stable releases from parent issues
 
+Use `python3 scripts/ci/release_parent.py plan PARENT --version VERSION --acceptance ISSUE`
+to preview the planning section on an existing parent. Use `--create-acceptance`
+to create and attach a missing Pi acceptance issue. If creation succeeds but
+attachment fails, retry the same command to reuse the marked issue. Use one
+apply operation at a time per parent. Omit `--apply` to keep the operation read
+only. `--commit SHA --apply` pins a candidate and enables automatic publication
+when all release gates pass. `python3 scripts/ci/release_parent.py status PARENT`
+reports the first blocker, eligibility, or an already-published version.
+
 The **Stable release** workflow publishes one stable version when a designated
 release parent meets all release conditions. Ordinary feature parents, including
 the Settings update parent, do not enable publication by themselves. Per-merge

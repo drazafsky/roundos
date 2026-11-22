@@ -56,3 +56,20 @@ configuration, and maintenance.
 10. **Move issues to PR Review when their PR is created.** After creating a
     pull request, set the GitHub project status of each issue tracked by the PR
     to **PR Review**.
+
+Use the repository scripts below for routine GitHub work. Run them from the
+repository root with Python 3 and an authenticated `gh` CLI.
+
+- Before editing, run `python3 scripts/ci/github_tools.py issue-start ISSUE --apply`.
+  After creating the PR, run `python3 scripts/ci/github_tools.py issue-review PR --apply`.
+  Omit `--apply` to preview. Project writes require GitHub Projects permission.
+- While waiting for review and CI, run
+  `python3 scripts/ci/github_tools.py pr-ready PR --watch`. Use `--feedback` to
+  read review summaries and PR conversation comments, and follow the thread
+  links for inline feedback. Confirm feedback is addressed before merging.
+- To plan a stable release, run
+  `python3 scripts/ci/release_parent.py plan PARENT --version VERSION --acceptance ISSUE`.
+  Use `--create-acceptance` if the parent has no Pi acceptance issue. Add
+  `--apply` to save the plan. Add `--commit SHA` with `--apply` only when opting
+  in the exact candidate. Check eligibility with
+  `python3 scripts/ci/release_parent.py status PARENT`. See [CI and releases](docs/CI-RELEASES.md).

@@ -118,7 +118,10 @@ def declaration(github, number):
     block(LABEL in labels and 'pull_request' not in parent, 'Parent is not opted in')
     block(parent['state'] == 'open' or parent.get('state_reason') == 'completed', 'Parent was abandoned')
     block(github.trusted(parent['user']['login']), 'Release parent must be authored by a maintainer')
-    config = record(parent.get('body'), 'roundos-release')
+    return validate_declaration(record(parent.get('body'), 'roundos-release'))
+
+
+def validate_declaration(config):
     block(set(config) == {'version', 'commit', 'acceptance_issue'}, 'Unexpected release declaration fields')
     version, sha, acceptance = config['version'], config['commit'], config['acceptance_issue']
     block(isinstance(version, str) and len(version) <= 64 and
@@ -129,8 +132,7 @@ def declaration(github, number):
     return version, sha, acceptance
 
 
-def eligibility(github, number, config=None):
-    version, sha, acceptance = config if config else declaration(github, number)
+def candidate_source(github, version, sha):
     target = tuple(map(int, version.split('.')))
     for existing in github.pages('releases'):
         tag = existing['tag_name'].removeprefix('v')
@@ -151,6 +153,11 @@ def eligibility(github, number, config=None):
         return sorted((entry['name'], entry['type'], entry['sha']) for entry in entries)
     block(workflows(sha) == workflows('main'),
           'Workflow files differ from main; GITHUB_TOKEN cannot publish this revision. Accept a commit with current workflows')
+
+
+def eligibility(github, number, config=None):
+    version, sha, acceptance = config if config else declaration(github, number)
+    candidate_source(github, version, sha)
 
     seen = {number}
     descendants = {}
@@ -207,6 +214,19 @@ def eligibility(github, number, config=None):
     return {'parent': number, 'version': version, 'sha': sha, 'acceptance': evidence}
 
 
+def already_published(github, version, sha):
+    tag = 'v' + version
+    existing = github.get(f'releases/tags/{tag}', missing_ok=True)
+    if not existing or existing['draft']:
+        return False
+    block(not existing['prerelease'] and existing['target_commitish'] == sha, 'Existing release identity differs')
+    block(github.get(f'git/ref/tags/{tag}', missing_ok=True) is not None
+          and github.get(f'commits/refs/tags/{tag}')['sha'] == sha, 'Published tag points at a different commit')
+    block({asset['name'] for asset in existing['assets']} == release.asset_names(version),
+          'Published stable release has missing or unexpected assets')
+    return True
+
+
 def candidates(github, *, hour=None):
     ready = []
     numbers = sorted(issue['number'] for issue in github.pages('issues?state=all&labels=release%3Astable')
@@ -225,14 +245,7 @@ def candidates(github, *, hour=None):
         try:
             config = declaration(parent, number)
             version, sha, _ = config
-            tag = 'v' + version
-            existing = parent.get(f'releases/tags/{tag}', missing_ok=True)
-            if existing and not existing['draft']:
-                block(not existing['prerelease'] and existing['target_commitish'] == sha, 'Existing release identity differs')
-                block(parent.get(f'git/ref/tags/{tag}', missing_ok=True) is not None
-                      and parent.get(f'commits/refs/tags/{tag}')['sha'] == sha, 'Published tag points at a different commit')
-                block({asset['name'] for asset in existing['assets']} == release.asset_names(version),
-                      'Published stable release has missing or unexpected assets')
+            if already_published(parent, version, sha):
                 print(f'#{number}: already published', file=sys.stderr)
                 continue
             ready.append(eligibility(parent, number, config))

@@ -29,12 +29,14 @@ const (
 )
 
 type Command struct {
+	ID          uint64
 	Kind        CommandKind
 	Preferences Preferences
 	Version     string
 }
 
 type Status struct {
+	LastCommandID  uint64 // identifies the command acknowledged by this snapshot
 	Preferences    Preferences
 	IgnoredVersion string
 	Busy           bool
@@ -179,6 +181,9 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 		case <-wake:
 			startCheck(false, clock.Now())
 		case command := <-s.commands:
+			if command.ID != 0 {
+				status.LastCommandID = command.ID
+			}
 			now := clock.Now()
 			switch command.Kind {
 			case ManualCheck:

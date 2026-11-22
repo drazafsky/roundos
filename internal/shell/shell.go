@@ -13,6 +13,7 @@ import (
 	"roundos/internal/notify"
 	"roundos/internal/textedit"
 	"roundos/internal/touch"
+	"roundos/internal/update"
 	"roundos/internal/wifi"
 	"roundos/internal/wire"
 )
@@ -33,6 +34,7 @@ type Model struct {
 	AppPages                map[string]int
 	PageApps                map[int]string
 	WiFi                    WiFiState
+	Updates                 UpdateState
 	Views                   map[int]wire.View
 	Status                  map[int]string
 	LastTouch               image.Point
@@ -112,6 +114,12 @@ func (m *Model) Snapshot() *Model {
 	copyOf.Notices = append([]notify.Item(nil), m.Notices...)
 	copyOf.WiFi.Networks = append([]wifi.Network(nil), m.WiFi.Networks...)
 	copyOf.WiFi.Pending = nil
+	copyOf.Updates.Pending = nil
+	if m.Updates.Status.Result.Release != nil {
+		r := *m.Updates.Status.Result.Release
+		r.Assets = append([]update.Asset(nil), r.Assets...)
+		copyOf.Updates.Status.Result.Release = &r
+	}
 	copyOf.AppStacks = make(map[int][]NavFrame, len(m.AppStacks))
 	for k, v := range m.AppStacks {
 		copyOf.AppStacks[k] = append([]NavFrame(nil), v...)
@@ -131,6 +139,7 @@ func (m *Model) Snapshot() *Model {
 func New() *Model {
 	m := &Model{Page: Home, Appearance: appearance.Default(), SupportedContacts: 2, Views: map[int]wire.View{}, AppStacks: map[int][]NavFrame{}, Status: map[int]string{Clock: "WAITING FOR APP", Timer: "WAITING FOR APP"}}
 	m.SetInstalledApps(nil)
+	m.Updates.Status.Preferences = update.DefaultPreferences()
 	return m
 }
 func AppID(page int) string {
@@ -152,7 +161,7 @@ func PageForApp(id string) int {
 	return Home
 }
 func (m *Model) Select(page int) bool {
-	if page < Home || (page > WiFiConfirm && !m.IsAppPage(page)) || page == m.Page {
+	if page < Home || (page > UpdatesPage && !m.IsAppPage(page)) || page == m.Page {
 		return false
 	}
 	if (m.Page == TextEditor || m.Page == DiscardPrompt) && page != TextEditor && page != DiscardPrompt {
@@ -262,6 +271,9 @@ func (m *Model) Tap(x, y int) (bool, string) {
 	if m.Page == Settings || m.Page == WiFiPage || m.Page == WiFiConfirm {
 		return m.SettingsTap(x, y), ""
 	}
+	if m.Page == UpdatesPage {
+		return m.UpdatesTap(x, y), ""
+	}
 	if m.Page == TextEditor || m.Page == Accessibility || m.Page == DiscardPrompt {
 		return m.TapSupplement(x, y)
 	}
@@ -344,6 +356,9 @@ func (m *Model) Rotate(delta int) (bool, string, int) {
 	if m.Page == Settings || m.Page == WiFiPage || m.Page == WiFiConfirm {
 		return m.SettingsRotate(delta), "", 0
 	}
+	if m.Page == UpdatesPage {
+		return m.UpdatesRotate(delta), "", 0
+	}
 	if m.Page == TextEditor || m.Page == Accessibility || m.Page == DiscardPrompt {
 		return m.RotateSupplement(delta)
 	}
@@ -402,6 +417,9 @@ func (m *Model) Activate() (bool, string) {
 	if m.Page == Settings || m.Page == WiFiPage || m.Page == WiFiConfirm {
 		return m.SettingsActivate(), ""
 	}
+	if m.Page == UpdatesPage {
+		return m.UpdatesActivate(time.Now()), ""
+	}
 	if m.Page == TextEditor || m.Page == Accessibility || m.Page == DiscardPrompt {
 		return m.ActivateSupplement()
 	}
@@ -459,6 +477,8 @@ func DrawInto(im *image.RGBA, m *Model, now time.Time) {
 		m.DrawSupplement(im)
 	case Settings, WiFiPage, WiFiConfirm:
 		m.DrawSettings(im)
+	case UpdatesPage:
+		m.DrawUpdates(im, now)
 	case Home:
 		drawCarousel(im, m, now)
 	case Diagnostics:

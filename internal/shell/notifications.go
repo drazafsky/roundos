@@ -68,6 +68,9 @@ func (m *Model) OpenSwitcher() bool {
 	return true
 }
 func (m *Model) Back() bool {
+	if m.Page == UpdatesPage {
+		return m.Select(Settings)
+	}
 	if m.Page == TextEditor || m.Page == DiscardPrompt {
 		return m.EditorBack()
 	}

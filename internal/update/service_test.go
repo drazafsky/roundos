@@ -278,6 +278,18 @@ func TestServiceRetainsCheckFailureAcrossCommands(t *testing.T) {
 	}
 }
 
+func TestServiceCommandAcknowledgementSurvivesUnidentifiedCommands(t *testing.T) {
+	_, _, _, s, _ := newServiceFixture(t, false)
+	waitStatus(t, s, func(st Status) bool { return !st.Preferences.Automatic })
+	s.Submit(Command{ID: 7, Kind: ChangePreferences, Preferences: Preferences{IntervalMinutes: 30}})
+	waitStatus(t, s, func(st Status) bool { return st.LastCommandID == 7 })
+	s.Submit(Command{Kind: IgnoreRelease, Version: "0.6.0"})
+	st := waitStatus(t, s, func(st Status) bool { return st.IgnoredVersion == "0.6.0" })
+	if st.LastCommandID != 7 {
+		t.Fatal("unidentified command erased the last UI acknowledgement")
+	}
+}
+
 func TestServiceCrashAfterExpiredBackoffAndClockCorrection(t *testing.T) {
 	oldNow := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "updates.json")

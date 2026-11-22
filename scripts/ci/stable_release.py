@@ -7,13 +7,15 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 import release
 
 LABEL = 'release:stable'
 MANUAL_LABEL = 'release:verification'
 MAX_ISSUES = 46  # One parent plus at most 45 descendants.
-MAX_API_READS = 240  # Budget per eligibility pass, including discovery across candidates.
+MAX_API_READS = 240  # Budget for one parent eligibility pass.
+PARENTS_PER_WINDOW = 3
 
 
 class Blocked(ValueError):
@@ -47,6 +49,9 @@ class GitHub:
     def reserve_reads(self, count=1):
         block(self.reads_left >= count, 'Release reconciliation exceeded its API request budget')
         self.reads_left -= count
+
+    def for_parent(self):
+        return GitHub(self.repo)
 
     def get(self, path, *, missing_ok=False):
         self.reserve_reads()
@@ -202,27 +207,37 @@ def eligibility(github, number, config=None):
     return {'parent': number, 'version': version, 'sha': sha, 'acceptance': evidence}
 
 
-def candidates(github):
+def candidates(github, *, hour=None):
     ready = []
-    for issue in github.pages('issues?state=all&labels=release%3Astable'):
-        if 'pull_request' in issue:
-            continue
+    numbers = sorted(issue['number'] for issue in github.pages('issues?state=all&labels=release%3Astable')
+                     if 'pull_request' not in issue)
+    if not numbers:
+        return ready
+    # Isolate parent budgets while limiting repeated event-driven runs. The
+    # scheduled run advances the window, so a large parent cannot starve others.
+    windows = (len(numbers) + PARENTS_PER_WINDOW - 1) // PARENTS_PER_WINDOW
+    hour = int(time.time() // 3600) if hour is None else hour
+    start = (hour % windows) * PARENTS_PER_WINDOW
+    if windows > 1:
+        print(f'Checking parent batch {hour % windows + 1} of {windows}', file=sys.stderr)
+    for number in numbers[start:start + PARENTS_PER_WINDOW]:
+        parent = github.for_parent()
         try:
-            config = declaration(github, issue['number'])
+            config = declaration(parent, number)
             version, sha, _ = config
             tag = 'v' + version
-            existing = github.get(f'releases/tags/{tag}', missing_ok=True)
+            existing = parent.get(f'releases/tags/{tag}', missing_ok=True)
             if existing and not existing['draft']:
                 block(not existing['prerelease'] and existing['target_commitish'] == sha, 'Existing release identity differs')
-                block(github.get(f'git/ref/tags/{tag}', missing_ok=True) is not None
-                      and github.get(f'commits/refs/tags/{tag}')['sha'] == sha, 'Published tag points at a different commit')
+                block(parent.get(f'git/ref/tags/{tag}', missing_ok=True) is not None
+                      and parent.get(f'commits/refs/tags/{tag}')['sha'] == sha, 'Published tag points at a different commit')
                 block({asset['name'] for asset in existing['assets']} == release.asset_names(version),
                       'Published stable release has missing or unexpected assets')
-                print(f'#{issue["number"]}: already published', file=sys.stderr)
+                print(f'#{number}: already published', file=sys.stderr)
                 continue
-            ready.append(eligibility(github, issue['number'], config))
+            ready.append(eligibility(parent, number, config))
         except Blocked as error:
-            print(f'#{issue["number"]}: {error}', file=sys.stderr)
+            print(f'#{number}: {error}', file=sys.stderr)
     return sorted(ready, key=lambda item: tuple(map(int, item['version'].split('.'))))
 
 
@@ -243,7 +258,6 @@ def main():
     repo = os.environ['GH_REPO']
     if args.command == 'discover':
         plans = candidates(GitHub(repo))
-        block(len(plans) <= 256, 'Too many release parents for an Actions matrix')
         args.output.write_text(json.dumps({'include': plans}))
     else:
         def check():

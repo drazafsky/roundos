@@ -57,6 +57,9 @@ class Fixture:
     def trusted(self, login):
         return login == 'maintainer'
 
+    def for_parent(self):
+        return self
+
     def included(self, ancestor, descendant):
         return (ancestor, descendant) not in self.excluded
 
@@ -264,6 +267,25 @@ class EligibilityTests(unittest.TestCase):
                 with self.assertRaisesRegex(stable.Blocked, 'Acceptance changed'):
                     stable.main()
                 publish.assert_not_called()
+
+    def test_discovery_isolates_budgets_and_rotates_through_later_parents(self):
+        github = mock.Mock(spec=stable.GitHub)
+        github.pages.return_value = [{'number': number} for number in range(1, 5)]
+        clients = [mock.Mock(spec=stable.GitHub) for _ in range(4)]
+        github.for_parent.side_effect = clients
+        for client in clients:
+            client.get.return_value = None
+
+        def eligible(client, number, config):
+            if number == 1:
+                raise stable.Blocked('API request budget exhausted')
+            self.assertIs(client, clients[number - 1])
+            return {'parent': number, 'version': VERSION}
+
+        with mock.patch.object(stable, 'declaration', return_value=(VERSION, SHA, 3)), \
+                mock.patch.object(stable, 'eligibility', side_effect=eligible):
+            self.assertEqual([plan['parent'] for plan in stable.candidates(github, hour=0)], [2, 3])
+            self.assertEqual([plan['parent'] for plan in stable.candidates(github, hour=1)], [4])
 
 
 class GitHubTests(unittest.TestCase):

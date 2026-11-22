@@ -115,9 +115,11 @@ of a closing PR. Such issues must also be maintainer-authored. The designated
 physical acceptance issue does not need a PR. Grouping issues can have children
 instead of a closing PR.
 
-A release parent can contain up to 45 descendants. The workflow also limits API
-reads per reconciliation so large issue or PR histories cannot exhaust the
-Actions token's quota. Discovery logs show when a limit prevents a release.
+A release parent can contain up to 45 descendants. Each parent has its own API
+read budget. If more than three parents carry `release:stable`, discovery checks
+three at a time and advances to the next batch each hour. Remove the label from
+published parents to keep future releases in the active batch. Discovery logs
+show the current batch and any limits that prevent a release.
 
 After testing, a maintainer with current repository write access records a
 comment on the acceptance issue with this block:

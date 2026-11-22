@@ -349,3 +349,44 @@ func TestServiceActiveBackoffClockRecoveryPersistsAcrossRestart(t *testing.T) {
 	call.reply <- fakeReply{result: CheckResult{Status: UpToDate}}
 	waitStatus(t, s, func(st Status) bool { return st.Sequence == 1 && !st.Busy })
 }
+
+func TestServiceIntervalChangePreservesPendingStartupAndEnableCheck(t *testing.T) {
+	for _, automatic := range []bool{false, true} {
+		name := "enable"
+		if automatic {
+			name = "startup"
+		}
+		t.Run(name, func(t *testing.T) {
+			attempt := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+			clock := &fakeClock{now: attempt.Add(time.Minute)}
+			store, _ := Open(filepath.Join(t.TempDir(), "updates.json"), attempt)
+			if err := store.SetPreferences(Preferences{Automatic: automatic, IntervalMinutes: 15}); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RecordAttempt(attempt); err != nil {
+				t.Fatal(err)
+			}
+			client := &fakeClient{calls: make(chan fakeCall, 8)}
+			ctx, cancel := context.WithCancel(context.Background())
+			s := Start(ctx, store, client, "0.5.1-dev", clock)
+			defer func() { cancel(); <-s.Done() }()
+			waitStatus(t, s, func(st Status) bool { return st.Preferences.Automatic == automatic })
+			if !automatic {
+				s.Submit(Command{Kind: ChangePreferences, Preferences: Preferences{Automatic: true, IntervalMinutes: 15}})
+				waitStatus(t, s, func(st Status) bool { return st.Preferences.Automatic })
+			}
+			s.Submit(Command{Kind: ChangePreferences, Preferences: Preferences{Automatic: true, IntervalMinutes: 1440}})
+			st := waitStatus(t, s, func(st Status) bool { return st.Preferences.IntervalMinutes == 1440 })
+			if !st.NextAutomatic.Equal(attempt.Add(CheckCooldown)) {
+				t.Fatalf("interval change postponed pending %s check: %+v", name, st)
+			}
+			clock.Advance(14 * time.Minute)
+			call := waitCall(t, client)
+			call.reply <- fakeReply{result: CheckResult{Status: UpToDate}}
+			st = waitStatus(t, s, func(st Status) bool { return st.Sequence == 1 && !st.Busy })
+			if !st.NextAutomatic.Equal(clock.Now().Add(24 * time.Hour)) {
+				t.Fatal("new interval did not apply after pending check")
+			}
+		})
+	}
+}

@@ -113,6 +113,7 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 	retryAfter := state.RetryAfter
 	status := Status{Preferences: state.Preferences, IgnoredVersion: state.IgnoredVersion, LastAttempt: state.LastAttempt}
 	automaticDue := now // each enabled startup checks as soon as eligible
+	pendingAutomatic := state.Preferences.Automatic
 	type completion struct {
 		result CheckResult
 		err    error
@@ -137,6 +138,7 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 			return
 		}
 		cooldown.Start(now)
+		pendingAutomatic = false
 		status.LastAttempt = now
 		status.Busy = true
 		status.Manual = manual
@@ -161,6 +163,9 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 		var wake <-chan time.Time
 		if status.Preferences.Automatic && !status.Busy {
 			next := automaticDue
+			if pendingAutomatic {
+				next = now
+			}
 			if eligible.After(next) {
 				next = eligible
 			}
@@ -183,7 +188,9 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 				status.OperationErr = store.SetPreferences(command.Preferences)
 				status.Preferences = store.Snapshot().Preferences
 				if !previous.Automatic && status.Preferences.Automatic {
-					automaticDue = now
+					pendingAutomatic = true
+				} else if !status.Preferences.Automatic {
+					pendingAutomatic = false
 				} else if previous.IntervalMinutes != status.Preferences.IntervalMinutes {
 					automaticDue = status.LastAttempt.Add(time.Duration(status.Preferences.IntervalMinutes) * time.Minute)
 					if status.LastAttempt.IsZero() {

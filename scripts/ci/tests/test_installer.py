@@ -19,10 +19,12 @@ class InstallerIdentityTests(unittest.TestCase):
         (self.root / 'scripts').mkdir()
         script = (ROOT / 'scripts/install-release.sh').read_text()
         script = script.replace('/etc/systemd/system/roundos.service', str(self.root / 'installed.service'))
+        script = script.replace('/etc/systemd/system/', str(self.root / 'installed-units') + '/')
         script = script.replace('/opt/roundos', str(self.root / 'managed'))
         (self.root / 'scripts/install-release.sh').write_text(script)
         (self.root / 'systemd').mkdir()
-        shutil.copyfile(ROOT / 'systemd/roundos.service', self.root / 'systemd/roundos.service')
+        for name in ('roundos.service', 'roundos-update.service', 'roundos-update-recover.service'):
+            shutil.copyfile(ROOT / 'systemd' / name, self.root / 'systemd' / name)
         self.mockbin = self.root / 'mockbin'
         self.mockbin.mkdir()
         self.systemctl_calls = self.root / 'systemctl.calls'
@@ -31,7 +33,7 @@ class InstallerIdentityTests(unittest.TestCase):
         self.command('systemctl', 'echo active; exit 0')
         for name in ('roundd', 'round-clock', 'round-timer'):
             path = self.root / name
-            path.write_text('#!/bin/sh\necho "RoundOS ' + VERSION + ' (source)"\n')
+            path.write_text('#!/bin/sh\ncase "$1" in -update-protocol) echo roundos-update-v1;; *) echo "RoundOS ' + VERSION + ' (source)";; esac\n')
             path.chmod(0o755)
         self.metadata = self.root / 'RELEASE_VERSION'
         self.metadata.write_text(VERSION + '\n')
@@ -84,6 +86,7 @@ class InstallerIdentityTests(unittest.TestCase):
         legacy = (ROOT / 'systemd/roundos.service').read_text().replace(
             'Type=notify\nNotifyAccess=main\nTimeoutStartSec=45s', 'Type=simple')
         legacy = legacy.replace('StartLimitIntervalSec=360', 'StartLimitIntervalSec=120')
+        legacy = legacy.replace('Requires=roundos-update-recover.service\n', '').replace(' roundos-update-recover.service', '')
         (self.root / 'installed.service').write_text(legacy)
         result = self.run_installer()
         self.assertIn('Refusing to change installed release while', result.stderr)

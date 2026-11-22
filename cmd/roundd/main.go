@@ -54,6 +54,9 @@ func main() {
 	}()
 	versionFlag := flag.Bool("version", false, "print RoundOS version and exit (no device access)")
 	startupProtocol := flag.Bool("startup-protocol", false, "print managed startup protocol and exit (no device access)")
+	updateProtocol := flag.Bool("update-protocol", false, "print managed update protocol and exit (no device access)")
+	installUpdate := flag.Bool("install-update", false, "run the managed update helper (systemd only)")
+	recoverUpdate := flag.Bool("recover-update", false, "recover interrupted managed update state before startup")
 	backend := flag.String("backend", "png", "png (safe preview) or drm")
 	output := flag.String("output", "roundos-preview.png", "PNG preview path")
 	previewPage := flag.String("preview-page", "home", "PNG preview page: home, settings, updates, wifi, clock, clock-options, clock-details, clock-gallery, timer, timer-duration, timer-picker, timer-dialog, touch, notifications, switcher, editor, accessibility")
@@ -100,6 +103,33 @@ func main() {
 	}
 	if *startupProtocol {
 		fmt.Println(service.StartupProtocol)
+		return
+	}
+	if *updateProtocol {
+		fmt.Println(update.UpdateProtocol)
+		return
+	}
+	if *installUpdate || *recoverUpdate {
+		if os.Geteuid() != 0 || (*installUpdate && *recoverUpdate) {
+			log.Print("managed update helper requires root and exactly one operation")
+			exitCode = 1
+			return
+		}
+		helperCtx, stopHelper := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stopHelper()
+		helperCtx, cancelHelper := update.InstallContext(helperCtx)
+		defer cancelHelper()
+		installer := update.NewInstaller()
+		var err error
+		if *recoverUpdate {
+			err = installer.Recover(helperCtx)
+		} else {
+			err = installer.RunPending(helperCtx)
+		}
+		if err != nil {
+			log.Printf("managed update: %v", err)
+			exitCode = 1
+		}
 		return
 	}
 	if *metricsEvery < 0 {

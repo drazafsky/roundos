@@ -306,9 +306,15 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 			break
 		}
 	}
-	if !ok || !declared {
+	if !ok {
 		r.mu.Unlock()
 		return false, nil
+	}
+	if !declared {
+		// Retained registrations remain owned by RUI after layout removal.
+		// Consume delayed input so a caller's legacy fallback cannot run it.
+		r.mu.Unlock()
+		return true, nil
 	}
 	rg := r.intActions[ev.Action]
 	bs := r.boolActions[ev.Action]

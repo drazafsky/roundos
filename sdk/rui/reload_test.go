@@ -107,7 +107,7 @@ func TestReplacementPublicationFailureKeepsActiveActions(t *testing.T) {
 	if err := r.Replace(data); err != nil {
 		t.Fatal(err)
 	}
-	if handled, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"}); handled || err != nil || count != 6 {
+	if handled, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"}); !handled || err != nil || count != 6 {
 		t.Fatal("removed action remained active after successful publication")
 	}
 }
@@ -214,8 +214,13 @@ func TestRemovedActionsStayRegisteredButCannotDispatch(t *testing.T) {
 	if err := r.Replace(data); err != nil {
 		t.Fatal(err)
 	}
-	if handled, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"}); handled || err != nil || count != 5 {
-		t.Fatal("removed action still dispatched", handled, err, count)
+	legacyCalls := 0
+	handled, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"})
+	if !handled {
+		legacyCalls++
+	}
+	if !handled || err != nil || count != 5 || legacyCalls != 0 {
+		t.Fatal("removed action dispatched or escaped into legacy fallback", handled, err, count, legacyCalls)
 	}
 	if err := r.Replace(original); err != nil {
 		t.Fatal(err)

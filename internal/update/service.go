@@ -209,12 +209,23 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 			status.Err = reply.err
 			status.OperationErr = nil
 			var limited *RateLimitError
+			var observed time.Time
 			if errors.As(reply.err, &limited) {
-				retryAfter = limited.RetryAt
+				reference := limited.ObservedAt
+				if reference.IsZero() {
+					reference = clock.Now()
+				}
+				// Store the deadline in the completion's clock domain. Time's
+				// monotonic component preserves elapsed time during NTP changes;
+				// a backwards synthetic clock retains a bounded remaining wait.
+				observed = clock.Now()
+				wait := max(time.Duration(0), limited.RetryAt.Sub(reference))
+				elapsed := max(time.Duration(0), observed.Sub(reference))
+				retryAfter = observed.Add(wait - min(wait, elapsed))
 			} else {
 				retryAfter = time.Time{}
 			}
-			if err := store.SetRetryAfter(retryAfter); err != nil {
+			if err := store.SetRetryAfter(retryAfter, observed); err != nil {
 				status.OperationErr = err
 			}
 		}

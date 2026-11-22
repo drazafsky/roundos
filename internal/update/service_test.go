@@ -285,7 +285,7 @@ func TestServiceCrashAfterExpiredBackoffAndClockCorrection(t *testing.T) {
 	if err := store.RecordAttempt(oldNow); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetRetryAfter(oldNow.Add(time.Hour)); err != nil {
+	if err := store.SetRetryAfter(oldNow.Add(time.Hour), oldNow); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordAttempt(oldNow.Add(2 * time.Hour)); err != nil {
@@ -319,7 +319,7 @@ func TestServiceActiveBackoffClockRecoveryPersistsAcrossRestart(t *testing.T) {
 	if err := store.RecordAttempt(oldNow); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetRetryAfter(oldNow.Add(time.Hour)); err != nil {
+	if err := store.SetRetryAfter(oldNow.Add(time.Hour), oldNow); err != nil {
 		t.Fatal(err)
 	}
 	corrected := oldNow.Add(-24 * time.Hour)
@@ -411,4 +411,31 @@ func TestServicePublishesOriginWithTheCompletedResult(t *testing.T) {
 	if st.Manual || st.Result.Status != UpToDate {
 		t.Fatal("completed automatic result retained the manual origin")
 	}
+}
+
+func TestServiceClockCorrectionDuringRequestPreservesServerBackoff(t *testing.T) {
+	store, clock, client, s, cancel := newServiceFixture(t, true)
+	call := waitCall(t, client)
+	clock.Advance(-24 * time.Hour)
+	observed := clock.Now()
+	deadline := observed.Add(time.Hour)
+	call.reply <- fakeReply{err: &RateLimitError{RetryAt: deadline, ObservedAt: observed}}
+	waitStatus(t, s, func(st Status) bool { return st.Sequence == 1 && !st.Busy })
+	cancel()
+	<-s.Done()
+	clock.Advance(time.Minute)
+	reopened, err := Open(store.path, clock.Now())
+	if err != nil || !reopened.Snapshot().RetryAfter.Equal(deadline) || !reopened.Snapshot().RetryObservedAt.Equal(observed) {
+		t.Fatalf("clock correction discarded the active server backoff: %+v, %v", reopened.Snapshot(), err)
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	s2 := Start(ctx, reopened, client, "0.5.1-dev", clock)
+	defer func() { stop(); <-s2.Done() }()
+	waitStatus(t, s2, func(st Status) bool { return st.NextManual.Equal(deadline) && st.NextAutomatic.Equal(deadline) })
+	clock.Advance(58 * time.Minute)
+	s2.Submit(Command{Kind: ManualCheck})
+	waitStatus(t, s2, func(st Status) bool { return errors.Is(st.OperationErr, ErrCooldown) })
+	noCall(t, client)
+	clock.Advance(time.Minute)
+	waitCall(t, client)
 }

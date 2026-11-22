@@ -205,15 +205,11 @@ func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID stri
 				continue
 			}
 			found = true
-			title, err := states.text(d.Title, 80)
+			var err error
+			v.Dialog, err = resolveDialog(d, states)
 			if err != nil {
 				return v, err
 			}
-			body, err := states.optText(d.Body, 240)
-			if err != nil {
-				return v, err
-			}
-			v.Dialog = &ui.Dialog{ID: d.ID, Title: title, Body: body, Confirm: d.ConfirmLabel, Cancel: d.CancelLabel, ConfirmAction: d.OnConfirm, CancelAction: d.OnCancel, Destructive: d.Destructive}
 			break
 		}
 		if !found {
@@ -231,4 +227,16 @@ func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID stri
 		return v, fmt.Errorf("RUI view exceeds %d-byte IPC frame (%d bytes)", wire.MaxMessage, len(b))
 	}
 	return v, nil
+}
+
+func resolveDialog(d spec.Dialog, states stateSnapshot) (*ui.Dialog, error) {
+	title, err := states.text(d.Title, 80)
+	if err != nil {
+		return nil, err
+	}
+	body, err := states.optText(d.Body, 240)
+	if err != nil {
+		return nil, err
+	}
+	return &ui.Dialog{ID: d.ID, Title: title, Body: body, Confirm: d.ConfirmLabel, Cancel: d.CancelLabel, ConfirmAction: d.OnConfirm, CancelAction: d.OnCancel, Destructive: d.Destructive}, nil
 }

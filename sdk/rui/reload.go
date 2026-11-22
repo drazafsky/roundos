@@ -2,9 +2,11 @@ package rui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"roundos/internal/wire"
 	"roundos/sdk/rui/spec"
 	"roundos/sdk/ui"
 )
@@ -81,7 +83,7 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	if _, ok := candidate.dialogActions[dialog]; !ok {
 		dialog = ""
 	}
-	view, err := stageReload(candidate, bindings, dialog)
+	view, err := stageReload(ctx, candidate, bindings, dialog)
 	if err != nil {
 		return err
 	}
@@ -113,7 +115,7 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	return nil
 }
 
-func stageReload(r *Runtime, bindings map[string]binding, dialog string) (view ui.View, err error) {
+func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, dialog string) (view ui.View, err error) {
 	defer func() {
 		if recover() != nil {
 			err = fmt.Errorf("replacement binding evaluation failed")
@@ -123,6 +125,9 @@ func stageReload(r *Runtime, bindings map[string]binding, dialog string) (view u
 	// inactive dialogs. Validation must not depend on today's visibility.
 	states := make(stateSnapshot, len(r.file.Manifest.Bindings))
 	for name, typ := range r.file.Manifest.Bindings {
+		if err := ctx.Err(); err != nil {
+			return view, err
+		}
 		b := bindings[name]
 		switch typ {
 		case spec.StringBinding:
@@ -152,6 +157,9 @@ func stageReload(r *Runtime, bindings map[string]binding, dialog string) (view u
 				return view, err
 			}
 			for _, widget := range group.Widgets {
+				if err := ctx.Err(); err != nil {
+					return view, err
+				}
 				if err := text(widget.Label, 160); err != nil {
 					return view, err
 				}
@@ -175,6 +183,9 @@ func stageReload(r *Runtime, bindings map[string]binding, dialog string) (view u
 		}
 	}
 	for _, item := range r.file.Document.Dialogs {
+		if err := ctx.Err(); err != nil {
+			return view, err
+		}
 		if err := text(&item.Title, 80); err != nil {
 			return view, err
 		}
@@ -185,12 +196,32 @@ func stageReload(r *Runtime, bindings map[string]binding, dialog string) (view u
 	// A hidden control or inactive dialog can become visible without another
 	// layout replacement. Verify that every such snapshot fits the IPC frame
 	// before discarding the last-good layout, using the same frozen values.
-	if _, err := buildViewWithVisibility(r.file, states, "", true); err != nil {
+	allVisible, err := buildViewWithVisibility(r.file, states, "", true)
+	if err != nil {
 		return view, fmt.Errorf("replacement all-visible snapshot: %w", err)
 	}
+	frame, err := json.Marshal(wire.Message{Version: wire.Version, Type: "view", View: &allVisible})
+	if err != nil {
+		return view, err
+	}
 	for _, item := range r.file.Document.Dialogs {
-		if _, err := buildViewWithVisibility(r.file, states, item.ID, true); err != nil {
-			return view, fmt.Errorf("replacement dialog %q snapshot: %w", item.ID, err)
+		if err := ctx.Err(); err != nil {
+			return view, err
+		}
+		resolved, err := resolveDialog(item, states)
+		if err != nil {
+			return view, err
+		}
+		data, err := json.Marshal(resolved)
+		if err != nil {
+			return view, err
+		}
+		// The nonempty view has no dialog. Adding its JSON member costs
+		// exactly this key/comma plus the encoded dialog, independent of
+		// screen count. Never rebuild or serialize every screen per dialog.
+		size := len(frame) + len(",\"dialog\":") + len(data)
+		if size > wire.MaxMessage {
+			return view, fmt.Errorf("replacement dialog %q snapshot exceeds %d-byte IPC frame (%d bytes)", item.ID, wire.MaxMessage, size)
 		}
 	}
 	return buildView(r.file, states, dialog)

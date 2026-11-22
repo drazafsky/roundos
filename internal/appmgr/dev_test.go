@@ -33,7 +33,7 @@ func TestDevelopmentEnvironmentOnlyReachesSelectedApp(t *testing.T) {
 				t.Fatal(err)
 			}
 			helper := filepath.Join(t.TempDir(), "app")
-			script := "#!/bin/sh\nprintf '%s' \"${ROUNDOS_RUI_DEV_DIR:-}\" > \"$ROUNDOS_STATE_DIR/$ROUNDOS_APP_ID\"\nexec sleep 30\n"
+			script := "#!/bin/sh\nset -e\nprintf '%s' \"${ROUNDOS_RUI_DEV_DIR:-}\" > \"$ROUNDOS_STATE_DIR/$ROUNDOS_APP_ID.tmp\"\nmv \"$ROUNDOS_STATE_DIR/$ROUNDOS_APP_ID.tmp\" \"$ROUNDOS_STATE_DIR/$ROUNDOS_APP_ID\"\nexec sleep 30\n"
 			if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
 				t.Fatal(err)
 			}

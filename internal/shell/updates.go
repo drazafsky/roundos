@@ -99,13 +99,20 @@ func (m *Model) UpdatesTap(x, y int) bool {
 		return false
 	}
 	for i := 0; i < 4; i++ {
-		top := 198 + i*54
-		if y >= top && y < top+48 {
+		top, height := m.updateControlGeometry(i)
+		if y >= top && y < top+height {
 			m.Updates.Focus = i
 			return m.UpdatesActivate(time.Now())
 		}
 	}
 	return false
+}
+
+func (m *Model) updateControlGeometry(i int) (top, height int) {
+	if m.Appearance.LargeTargets {
+		return 194 + i*58, 54
+	}
+	return 198 + i*54, 48
 }
 
 func intervalLabel(minutes int) string {
@@ -137,14 +144,18 @@ func (m *Model) updateMessage() string {
 	if m.Updates.InFlight != 0 {
 		return "PLEASE WAIT"
 	}
-	if status.Busy || errors.Is(status.OperationErr, update.ErrBusy) {
-		return "CHECKING FOR A RELEASE"
+	operationErr := status.CommandErr
+	if operationErr == nil || errors.Is(operationErr, update.ErrBusy) || errors.Is(operationErr, update.ErrCooldown) {
+		operationErr = status.OperationErr
 	}
-	if errors.Is(status.OperationErr, update.ErrCooldown) {
+	if errors.Is(operationErr, update.ErrCooldown) {
 		return "PLEASE WAIT BEFORE CHECKING"
 	}
-	if status.OperationErr != nil {
+	if operationErr != nil && !errors.Is(operationErr, update.ErrBusy) {
 		return "COULD NOT SAVE UPDATE SETTINGS"
+	}
+	if status.Busy || errors.Is(operationErr, update.ErrBusy) {
+		return "CHECKING FOR A RELEASE"
 	}
 	var limited *update.RateLimitError
 	if errors.As(status.Err, &limited) {
@@ -200,10 +211,10 @@ func (m *Model) DrawUpdates(im *image.RGBA, now time.Time) {
 		details[2] = "AVAILABLE IN " + waitLabel(status.NextManual.Sub(now))
 	}
 	for i, label := range labels {
-		y := 198 + i*54
-		rect(im, 93, y, 387, y+48, p.Surface)
+		y, height := m.updateControlGeometry(i)
+		rect(im, 93, y, 387, y+height, p.Surface)
 		if m.Updates.Focus == i {
-			outlineRect(im, 91, y-2, 389, y+50, p.Focus)
+			outlineRect(im, 91, y-2, 389, y+height+2, p.Focus)
 		}
 		color := p.PrimaryText
 		if (i == 2 && disabled) || ((!m.Updates.Ready || m.Updates.InFlight != 0) && i != 3) {

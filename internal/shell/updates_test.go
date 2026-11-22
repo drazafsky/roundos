@@ -119,6 +119,10 @@ func TestUpdatesMessagesAndSnapshot(t *testing.T) {
 		{update.Status{Err: update.ErrIncompatibleRelease}, "RELEASE HAS NO COMPATIBLE PACKAGE"},
 		{update.Status{Err: &update.RateLimitError{}}, "GITHUB RATE LIMIT - PLEASE WAIT"},
 		{update.Status{OperationErr: errors.New("disk full")}, "COULD NOT SAVE UPDATE SETTINGS"},
+		{update.Status{Busy: true, OperationErr: errors.New("disk full")}, "COULD NOT SAVE UPDATE SETTINGS"},
+		{update.Status{Busy: true, CommandErr: errors.New("disk full")}, "COULD NOT SAVE UPDATE SETTINGS"},
+		{update.Status{CommandErr: update.ErrBusy, Result: update.CheckResult{Status: update.UpToDate}}, "YOU ARE UP TO DATE"},
+		{update.Status{CommandErr: update.ErrCooldown, Result: update.CheckResult{Status: update.NoStableRelease}}, "NO STABLE RELEASE PUBLISHED"},
 		{update.Status{Result: update.CheckResult{Status: update.UpToDate}}, "YOU ARE UP TO DATE"},
 		{update.Status{Result: update.CheckResult{Status: update.NoStableRelease}}, "NO STABLE RELEASE PUBLISHED"},
 	} {
@@ -148,6 +152,21 @@ func TestUpdatesMessagesAndSnapshot(t *testing.T) {
 		if im := Draw(m, time.Now()); im.Bounds().Dx() != 480 {
 			t.Fatal("Updates did not render at device dimensions")
 		}
+	}
+}
+
+func TestUpdatesLargeTargetGeometryMatchesTouch(t *testing.T) {
+	m := New()
+	m.OpenUpdates()
+	m.SetUpdateStatus(update.Status{Preferences: update.DefaultPreferences()})
+	_, normal := m.updateControlGeometry(0)
+	m.Appearance.LargeTargets = true
+	top, large := m.updateControlGeometry(0)
+	if large <= normal {
+		t.Fatal("large controls did not grow")
+	}
+	if !m.UpdatesTap(240, top) || m.TakeUpdateRequest() == nil {
+		t.Fatal("enlarged area did not accept touch")
 	}
 }
 

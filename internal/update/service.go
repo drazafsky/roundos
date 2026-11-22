@@ -37,6 +37,7 @@ type Command struct {
 
 type Status struct {
 	LastCommandID  uint64 // identifies the command acknowledged by this snapshot
+	CommandErr     error  // retained outcome of LastCommandID, independent of later checks
 	Preferences    Preferences
 	IgnoredVersion string
 	Busy           bool
@@ -205,6 +206,9 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 			case IgnoreRelease:
 				status.OperationErr = store.IgnoreVersion(command.Version)
 				status.IgnoredVersion = store.Snapshot().IgnoredVersion
+			}
+			if command.ID != 0 {
+				status.CommandErr = status.OperationErr
 			}
 		case reply := <-completed:
 			status.Busy = false

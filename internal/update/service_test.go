@@ -161,6 +161,21 @@ func TestServiceStartupFailureManualCooldownAndPeriod(t *testing.T) {
 	}
 }
 
+func TestCommandOutcomeSurvivesLaterCheckPersistenceFailure(t *testing.T) {
+	store, _, client, s, _ := newServiceFixture(t, true)
+	call := waitCall(t, client)
+	s.Submit(Command{ID: 7, Kind: IgnoreRelease, Version: "0.6.0"})
+	waitStatus(t, s, func(st Status) bool { return st.LastCommandID == 7 })
+	store.mu.Lock()
+	store.syncDirectory = func(string) error { return errors.New("sync failed") }
+	store.mu.Unlock()
+	call.reply <- fakeReply{result: CheckResult{Status: UpToDate}}
+	st := waitStatus(t, s, func(st Status) bool { return st.Sequence == 1 })
+	if st.LastCommandID != 7 || st.CommandErr != nil || st.OperationErr == nil || st.IgnoredVersion != "0.6.0" {
+		t.Fatalf("check outcome overwrote the command acknowledgement: %+v", st)
+	}
+}
+
 func TestServiceToggleIntervalAndBusyCoalescing(t *testing.T) {
 	_, clock, client, s, _ := newServiceFixture(t, false)
 	waitStatus(t, s, func(st Status) bool { return !st.Preferences.Automatic })

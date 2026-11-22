@@ -390,3 +390,25 @@ func TestServiceIntervalChangePreservesPendingStartupAndEnableCheck(t *testing.T
 		})
 	}
 }
+
+func TestServicePublishesOriginWithTheCompletedResult(t *testing.T) {
+	_, clock, client, s, _ := newServiceFixture(t, false)
+	waitStatus(t, s, func(st Status) bool { return !st.Preferences.Automatic })
+	s.Submit(Command{Kind: ManualCheck})
+	manual := waitCall(t, client)
+	manual.reply <- fakeReply{result: CheckResult{Status: Available, Release: &Release{Version: "0.6.0"}}}
+	waitStatus(t, s, func(st Status) bool { return st.Sequence == 1 && st.Manual && !st.Busy })
+	s.Submit(Command{Kind: ChangePreferences, Preferences: Preferences{Automatic: true, IntervalMinutes: 15}})
+	waitStatus(t, s, func(st Status) bool { return st.Preferences.Automatic })
+	clock.Advance(CheckCooldown)
+	automatic := waitCall(t, client)
+	st := waitStatus(t, s, func(st Status) bool { return st.Busy })
+	if st.Sequence != 1 || !st.Manual || st.Result.Status != Available {
+		t.Fatal("new request overwrote the previous completion's origin")
+	}
+	automatic.reply <- fakeReply{result: CheckResult{Status: UpToDate}}
+	st = waitStatus(t, s, func(st Status) bool { return st.Sequence == 2 && !st.Busy })
+	if st.Manual || st.Result.Status != UpToDate {
+		t.Fatal("completed automatic result retained the manual origin")
+	}
+}

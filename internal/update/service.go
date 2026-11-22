@@ -117,6 +117,7 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 	type completion struct {
 		result CheckResult
 		err    error
+		manual bool
 	}
 	completed := make(chan completion, 1)
 	startCheck := func(manual bool, now time.Time) {
@@ -141,13 +142,12 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 		pendingAutomatic = false
 		status.LastAttempt = now
 		status.Busy = true
-		status.Manual = manual
 		status.OperationErr = nil
 		automaticDue = now.Add(time.Duration(status.Preferences.IntervalMinutes) * time.Minute)
 		go func() {
 			r, err := client.Check(ctx, installed)
 			select {
-			case completed <- completion{r, err}:
+			case completed <- completion{r, err, manual}:
 			case <-ctx.Done():
 			}
 		}()
@@ -204,6 +204,7 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 		case reply := <-completed:
 			status.Busy = false
 			status.Sequence++
+			status.Manual = reply.manual
 			status.Result = reply.result
 			status.Err = reply.err
 			status.OperationErr = nil

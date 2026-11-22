@@ -9,8 +9,8 @@ import (
 	"roundos/sdk/ui"
 )
 
-// ErrReloadDeferred means the caller should retry after the secure editor closes.
-var ErrReloadDeferred = errors.New("layout reload deferred while secure editor is active")
+// ErrReloadDeferred means the caller should retry after the editor closes.
+var ErrReloadDeferred = errors.New("layout reload deferred while a text editor is active")
 
 // Replace validates a compiled layout against existing registrations and state
 // before changing anything. Call it on the Dispatch/Flush event loop. It never
@@ -27,6 +27,9 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	defer r.flushMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if editor, ok := r.publisher.(interface{ TextEditorActive() bool }); ok && editor.TextEditorActive() {
+		return ErrReloadDeferred
 	}
 	if editor, ok := r.publisher.(interface{ SecureEditorActive() bool }); ok && editor.SecureEditorActive() {
 		return ErrReloadDeferred

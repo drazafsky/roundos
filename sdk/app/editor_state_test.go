@@ -78,6 +78,9 @@ func TestNonsecureRequestIDCannotBeReusedForSecureEditor(t *testing.T) {
 	if err := <-seen; err != nil {
 		t.Fatal(err)
 	}
+	if !c.TextEditorActive() {
+		t.Fatal("nonsecure editor was not tracked for reload deferral")
+	}
 	if err := c.RequestText("shared", "Password", "", true); err == nil {
 		t.Fatal("outstanding nonsecure ID reused for secure editor")
 	}
@@ -92,6 +95,9 @@ func TestNonsecureRequestIDCannotBeReusedForSecureEditor(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("prior result missing")
 	}
+	if c.TextEditorActive() {
+		t.Fatal("completed nonsecure request still blocks reload")
+	}
 	go func() { _, err := wire.Read(peer); seen <- err }()
 	if err := c.RequestText("shared", "Password", "", true); err != nil {
 		t.Fatal("ID not reusable after prior result", err)
@@ -101,5 +107,41 @@ func TestNonsecureRequestIDCannotBeReusedForSecureEditor(t *testing.T) {
 	}
 	if !c.SecureEditorActive() {
 		t.Fatal("secure request not tracked after safe reuse")
+	}
+}
+
+func TestTrackedEditorResultBlocksReloadUntilApplicationDispatch(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	peer.SetDeadline(time.Now().Add(3 * time.Second))
+	c := &Client{conn: conn, events: make(chan Event, 4), done: make(chan struct{})}
+	defer c.Close()
+	c.TrackEditorResults()
+	go c.readLoop()
+	seen := make(chan error, 1)
+	go func() { _, err := wire.Read(peer); seen <- err }()
+	if err := c.RequestText("title", "Title", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-seen; err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.Write(peer, wire.Message{Version: wire.Version, Type: "text_result", TextResult: &wire.TextResult{ID: "title", Value: "Changed"}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.Events():
+	case <-time.After(time.Second):
+		t.Fatal("result not delivered")
+	}
+	if !c.TextEditorActive() {
+		t.Fatal("queued result no longer protects layout context")
+	}
+	if err := c.RequestText("title", "Title", "", false); err == nil {
+		t.Fatal("unacknowledged editor ID reused")
+	}
+	c.AcknowledgeTextResult("title")
+	if c.TextEditorActive() {
+		t.Fatal("dispatched result still blocks reload")
 	}
 }

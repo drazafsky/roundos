@@ -14,6 +14,7 @@ import (
 
 	"roundos/internal/rui/compile"
 	"roundos/internal/rui/devproto"
+	"roundos/internal/wire"
 	"roundos/sdk/app"
 )
 
@@ -351,3 +352,55 @@ func TestPrivateDevelopmentSessionDeliversOnAppLoop(t *testing.T) {
 }
 
 var _ Publisher = (*secureCapture)(nil)
+
+type textCapture struct {
+	capture
+	active  bool
+	tracked int
+}
+
+func (p *textCapture) TextEditorActive() bool       { return p.active }
+func (p *textCapture) TrackEditorResults()          { p.tracked++ }
+func (p *textCapture) AcknowledgeTextResult(string) { p.active = false }
+
+func TestNonsecureEditorDefersIncompatibleReloadUntilResult(t *testing.T) {
+	data, _, _ := loadDemo(t)
+	pub := &textCapture{active: true}
+	r, err := NewForApp(pub, data, "org.example.rui.demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, enabled, title := 5, true, "draft owner"
+	registerDemo(t, r, &count, &enabled, &title)
+	replacement := replacement(t, func(source []byte) []byte {
+		return bytes.Replace(source, []byte("onPress: demo.editTitle"), []byte("navigate: demo.settings"), 1)
+	})
+	old := r.file
+	if err := r.Replace(replacement); !errors.Is(err, ErrReloadDeferred) || r.file != old || pub.count() != 0 {
+		t.Fatal("incompatible reload replaced an outstanding editor context", err)
+	}
+	if handled, err := r.Dispatch(app.Event{Type: "text_result", TextResult: &wire.TextResult{ID: "title", Value: title}}); handled || err != nil {
+		t.Fatal("text result did not remain available to the app handler", handled, err)
+	}
+	if err := r.Replace(replacement); err != nil || pub.count() != 1 {
+		t.Fatal("reload did not resume after editor result", err)
+	}
+}
+
+func TestEditorResultTrackingRequiresDevelopmentOptIn(t *testing.T) {
+	data, _, _ := loadDemo(t)
+	for _, directory := range []string{"", t.TempDir()} {
+		t.Setenv("ROUNDOS_RUI_DEV_DIR", directory)
+		pub := &textCapture{}
+		if _, err := NewForApp(pub, data, "org.example.rui.demo"); err != nil {
+			t.Fatal(err)
+		}
+		want := 0
+		if directory != "" {
+			want = 1
+		}
+		if pub.tracked != want {
+			t.Fatal("editor tracking changed outside development opt-in", directory, pub.tracked)
+		}
+	}
+}

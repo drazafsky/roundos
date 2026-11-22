@@ -127,6 +127,11 @@ func NewForApp(p Publisher, data []byte, expectedAppID string) (*Runtime, error)
 	for _, d := range f.Document.Dialogs {
 		r.dialogActions[d.ID] = [2]string{d.OnConfirm, d.OnCancel}
 	}
+	if os.Getenv("ROUNDOS_RUI_DEV_DIR") != "" {
+		if tracker, ok := p.(interface{ TrackEditorResults() }); ok {
+			tracker.TrackEditorResults()
+		}
+	}
 	return r, nil
 }
 func (r *Runtime) registerBinding(name string, b binding) error {
@@ -281,6 +286,12 @@ func (r *Runtime) Dispatch(ev app.Event) (bool, error) {
 	return r.DispatchContext(context.Background(), ev)
 }
 func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, error) {
+	if ev.Type == "text_result" && ev.TextResult != nil {
+		if tracker, ok := r.publisher.(interface{ AcknowledgeTextResult(string) }); ok {
+			tracker.AcknowledgeTextResult(ev.TextResult.ID)
+		}
+		return false, nil
+	}
 	if ev.Type == "visibility" {
 		r.mu.Lock()
 		r.visible = ev.Visible

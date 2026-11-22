@@ -82,8 +82,14 @@ Hidden widget properties and inactive dialogs are checked too. Candidate
 publication must succeed before its tree and actions become active; replacement
 also publishes one snapshot while hidden so the next foreground view agrees.
 
-`Client.SecureEditorActive()` reports only editing status. Replacement returns
-`rui.ErrReloadDeferred` while a secure editor is open, and the desktop retries
+`Client.TextEditorActive()` reports outstanding editor requests without their
+contents; `SecureEditorActive()` remains available for secure status. Replacement
+returns `rui.ErrReloadDeferred` while an app editor request is outstanding, so an
+incompatible layout cannot replace the editor's context before its result. RUI
+enables result tracking only for an explicit development launch and keeps that
+protection until `Dispatch` hands the result to the app loop, so a queued result
+cannot race ahead of its state update. Pass all SDK events through `Dispatch`
+before handling legacy events, including text results. The desktop retries
 its latest candidate. Stable identities preserve navigation and compatible
 drafts. Removed focus chooses the nearest eligible old neighbor (preceding
 wins ties), then a new eligible control, or Back. Incompatible picker/slider

@@ -107,7 +107,8 @@ remain open while the last milestone finishes; closing it as not planned blocks
 publication.
 
 Every implementation leaf needs a GitHub closing PR merged into `main`, and
-every merged closing PR must be included in the selected commit. Use closing keywords
+every merged closing PR must be included in the selected commit. Open closing
+PRs block publication, and closed, unmerged PRs are ignored. Use closing keywords
 in the PR description so GitHub records the relationship. For an issue devoted
 only to manual verification, a maintainer can use `release:verification` instead
 of a closing PR. Such issues must also be maintainer-authored. The designated

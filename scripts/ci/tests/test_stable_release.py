@@ -39,7 +39,7 @@ class Fixture:
         self.issues[1]['body'] = block_record('roundos-release', {
             'version': VERSION, 'commit': SHA, 'acceptance_issue': 3})
         self.children = {1: [2, 3], 2: [], 3: []}
-        self.prs = {2: [{'number': 10, 'merged': True, 'baseRefName': 'main',
+        self.prs = {2: [{'number': 10, 'state': 'MERGED', 'merged': True, 'baseRefName': 'main',
                          'mergeCommit': {'oid': MERGE}, 'repository': {'nameWithOwner': REPO}}], 3: []}
         self.comments = [{'body': block_record('roundos-acceptance', {
             'version': VERSION, 'commit': SHA, 'result': 'passed',
@@ -175,9 +175,12 @@ class EligibilityTests(unittest.TestCase):
         with self.assertRaisesRegex(stable.Blocked, 'PR #10'):
             self.ready()
         self.github.excluded.clear()
-        abandoned = dict(self.github.prs[2][0], merged=False)
+        abandoned = dict(self.github.prs[2][0], number=11, state='CLOSED', merged=False)
         self.github.prs[2].append(abandoned)
         self.ready()
+        self.github.prs[2].append(dict(abandoned, number=12, state='OPEN'))
+        with self.assertRaisesRegex(stable.Blocked, 'Closing PR #12 is still open'):
+            self.ready()
         self.github.prs[2] = [abandoned]
         with self.assertRaisesRegex(stable.Blocked, 'no closing PR'):
             self.ready()

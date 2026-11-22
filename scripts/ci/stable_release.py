@@ -81,7 +81,7 @@ class GitHub:
         query = '''query($owner:String!,$name:String!,$number:Int!) {
           repository(owner:$owner,name:$name) { issue(number:$number) {
             closedByPullRequestsReferences(first:100,includeClosedPrs:true) {
-              nodes { number merged baseRefName mergeCommit { oid } repository { nameWithOwner } }
+              nodes { number state merged baseRefName mergeCommit { oid } repository { nameWithOwner } }
               pageInfo { hasNextPage }
             }
           } }
@@ -163,7 +163,10 @@ def eligibility(github, number, config=None):
                   f'Issue #{child_number} is not completed')
             descendants[child_number] = child
             has_children = visit(child_number)
-            prs = [pr for pr in github.closing_prs(child_number) if pr['merged']]
+            closing_prs = github.closing_prs(child_number)
+            for pr in closing_prs:
+                block(pr['state'] != 'OPEN', f'Closing PR #{pr["number"]} is still open')
+            prs = [pr for pr in closing_prs if pr['merged']]
             manual = MANUAL_LABEL in {label['name'] for label in child['labels']}
             if manual:
                 block(github.trusted(child['user']['login']), 'Manual verification issues must be authored by a maintainer')

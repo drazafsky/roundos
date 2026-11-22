@@ -311,3 +311,41 @@ func TestServiceCrashAfterExpiredBackoffAndClockCorrection(t *testing.T) {
 	clock.Advance(CheckCooldown)
 	waitCall(t, client)
 }
+
+func TestServiceActiveBackoffClockRecoveryPersistsAcrossRestart(t *testing.T) {
+	oldNow := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "updates.json")
+	store, _ := Open(path, oldNow)
+	if err := store.RecordAttempt(oldNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetRetryAfter(oldNow.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	corrected := oldNow.Add(-24 * time.Hour)
+	deadline := corrected.Add(time.Hour)
+	rebased, err := Open(path, corrected)
+	if err != nil || !rebased.Snapshot().RetryAfter.Equal(deadline) {
+		t.Fatalf("active backoff was not rebased: %+v, %v", rebased.Snapshot(), err)
+	}
+	// Reopen again after ten minutes to prove recovery was durably recorded,
+	// rather than granting another full hour on every daemon restart.
+	clock := &fakeClock{now: corrected.Add(10 * time.Minute)}
+	reopened, err := Open(path, clock.Now())
+	if err != nil || !reopened.Snapshot().RetryAfter.Equal(deadline) {
+		t.Fatalf("rebased backoff was not persisted: %+v, %v", reopened.Snapshot(), err)
+	}
+	client := &fakeClient{calls: make(chan fakeCall, 8)}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := Start(ctx, reopened, client, "0.5.1-dev", clock)
+	defer func() { cancel(); <-s.Done() }()
+	waitStatus(t, s, func(st Status) bool { return st.NextAutomatic.Equal(deadline) && st.NextManual.Equal(deadline) })
+	clock.Advance(49 * time.Minute)
+	s.Submit(Command{Kind: ManualCheck})
+	waitStatus(t, s, func(st Status) bool { return errors.Is(st.OperationErr, ErrCooldown) })
+	noCall(t, client)
+	clock.Advance(time.Minute)
+	call := waitCall(t, client)
+	call.reply <- fakeReply{result: CheckResult{Status: UpToDate}}
+	waitStatus(t, s, func(st Status) bool { return st.Sequence == 1 && !st.Busy })
+}

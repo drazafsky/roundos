@@ -15,7 +15,7 @@ import (
 func releaseFixture() map[string]any {
 	var assets []Asset
 	for _, name := range []string{"roundos-0.6.0-linux-armv7.tar.gz", "release.json", "SHA256SUMS"} {
-		assets = append(assets, Asset{Name: name, Size: 123, URL: "https://github.com/drazafsky/roundos/releases/download/v0.6.0/" + name})
+		assets = append(assets, Asset{Name: name, Size: 123, Digest: "sha256:" + strings.Repeat("a", 64), URL: "https://github.com/drazafsky/roundos/releases/download/v0.6.0/" + name})
 	}
 	return map[string]any{"id": 123, "tag_name": "v0.6.0", "name": "RoundOS 0.6.0", "body": "## Changes\nLonger release notes.", "draft": false, "prerelease": false, "assets": assets}
 }

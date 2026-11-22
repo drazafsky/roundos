@@ -76,21 +76,27 @@ type TextResult struct {
 }
 
 type Message struct {
-	Version      int           `json:"version"`
-	Type         string        `json:"type"` // hello, visibility, view, input, close
-	App          string        `json:"app,omitempty"`
-	Token        string        `json:"token,omitempty"`
-	Visible      bool          `json:"visible,omitempty"`
-	Action       string        `json:"action,omitempty"`
-	Delta        int           `json:"delta,omitempty"`
-	View         *View         `json:"view,omitempty"`
-	Patch        *ViewPatch    `json:"patch,omitempty"`
-	Gesture      *Gesture      `json:"gesture,omitempty"`
-	Notification *Notification `json:"notification,omitempty"`
-	TextRequest  *TextRequest  `json:"text_request,omitempty"`
-	TextResult   *TextResult   `json:"text_result,omitempty"`
-	RawContacts  bool          `json:"raw_contacts,omitempty"`
-	Contacts     []Contact     `json:"contacts,omitempty"`
+	Version        int              `json:"version"`
+	Type           string           `json:"type"` // hello, visibility, view, input, close
+	App            string           `json:"app,omitempty"`
+	Token          string           `json:"token,omitempty"`
+	Visible        bool             `json:"visible,omitempty"`
+	Action         string           `json:"action,omitempty"`
+	Delta          int              `json:"delta,omitempty"`
+	View           *View            `json:"view,omitempty"`
+	Patch          *ViewPatch       `json:"patch,omitempty"`
+	Gesture        *Gesture         `json:"gesture,omitempty"`
+	Notification   *Notification    `json:"notification,omitempty"`
+	TextRequest    *TextRequest     `json:"text_request,omitempty"`
+	TextResult     *TextResult      `json:"text_result,omitempty"`
+	RawContacts    bool             `json:"raw_contacts,omitempty"`
+	Contacts       []Contact        `json:"contacts,omitempty"`
+	Capabilities   []string         `json:"capabilities,omitempty"`
+	LayoutRevision uint64           `json:"layout_revision,omitempty"`
+	BaseRevision   uint64           `json:"base_revision,omitempty"`
+	NewRevision    uint64           `json:"new_revision,omitempty"`
+	Updates        []PropertyUpdate `json:"updates,omitempty"`
+	UIEvent        *UIEvent         `json:"ui_event,omitempty"`
 }
 
 func Write(w io.Writer, msg Message) error {

@@ -75,7 +75,7 @@ func (m *Model) syncNavigation(page int) {
 			if f.Scroll >= len(s.Widgets) {
 				f.Scroll = max(0, len(s.Widgets)-1)
 			}
-			f.ScrollPx = math.Max(0, math.Min(circleui.MaxScrollPx(len(s.Widgets), s.Hero != "", m.Appearance.LargeTargets), f.ScrollPx))
+			f.ScrollPx = math.Max(0, math.Min(circleui.ScreenMaxScrollPx(s, m.Appearance.LargeTargets), f.ScrollPx))
 			valid = append(valid, f)
 		} else {
 			break
@@ -139,7 +139,7 @@ func (m *Model) visibleWidgets() []circleui.Row {
 	}
 	idx := findFocus(s, f.FocusID)
 	_ = idx
-	return circleui.VisiblePixelAt(s.Widgets, f.ScrollPx, s.Hero != "", m.Appearance.LargeTargets)
+	return circleui.VisibleScreenPixelAt(s, f.ScrollPx, m.Appearance.LargeTargets)
 }
 func (m *Model) WidgetRotate(delta int) bool {
 	f, s, ok := m.navFrame(m.Page)
@@ -186,8 +186,8 @@ func (m *Model) WidgetRotate(delta int) bool {
 		return false
 	}
 	f.FocusID = s.Widgets[next].ID
-	f.Scroll = circleui.ScrollTo(s.Widgets, next, f.Scroll, s.Hero != "", m.Appearance.LargeTargets)
-	_, _, step, _ := circleui.RowMetrics(s.Hero != "", m.Appearance.LargeTargets)
+	f.Scroll = circleui.ScreenScrollTo(s, next, f.Scroll, m.Appearance.LargeTargets)
+	_, _, step, _ := circleui.ScreenMetrics(s, m.Appearance.LargeTargets)
 	f.ScrollPx = float64(f.Scroll * step)
 	m.StopKinetic()
 	return true
@@ -218,6 +218,7 @@ func (m *Model) ActivateWidget() (bool, string) {
 			if m.WidgetEditValue == w.Value {
 				return true, ""
 			}
+			m.recordWidgetInput(w, "int", m.WidgetEditValue, false)
 			return true, w.Action
 		}
 		m.EditingWidget = w.ID
@@ -239,10 +240,12 @@ func (m *Model) ActivateWidget() (bool, string) {
 			}
 		}
 		m.WidgetDelta = 0
+		m.recordWidgetInput(w, "bool", 0, !w.Checked)
 		return true, w.Action
 	}
 	if w.Kind == "button" || w.Kind == "list_item" {
 		m.WidgetDelta = 0
+		m.recordWidgetInput(w, "press", 0, false)
 		return true, w.Action
 	}
 	return false, ""
@@ -278,6 +281,7 @@ func (m *Model) WidgetTap(x, y int) (bool, string) {
 		if m.WidgetDelta == w.Value {
 			return true, ""
 		}
+		m.recordWidgetInput(w, "int", m.WidgetDelta, false)
 		return true, w.Action
 	}
 	return m.ActivateWidget()
@@ -346,9 +350,9 @@ func (m *Model) AdvanceKinetic(now time.Time) bool {
 	}
 	old := f.ScrollPx
 	next := old + m.KineticVelocity*dt
-	maxPx := circleui.MaxScrollPx(len(s.Widgets), s.Hero != "", m.Appearance.LargeTargets)
+	maxPx := circleui.ScreenMaxScrollPx(s, m.Appearance.LargeTargets)
 	f.ScrollPx = math.Max(0, math.Min(maxPx, next))
-	_, _, step, _ := circleui.RowMetrics(s.Hero != "", m.Appearance.LargeTargets)
+	_, _, step, _ := circleui.ScreenMetrics(s, m.Appearance.LargeTargets)
 	f.Scroll = int(f.ScrollPx / float64(step))
 	speed := math.Abs(m.KineticVelocity) - 2200*dt
 	if speed <= 0 || now.After(m.KineticUntil) || (f.ScrollPx == old && next != old) {
@@ -407,13 +411,13 @@ func (m *Model) WidgetDragMoveAt(x, y int, deltaY float64, at time.Time) bool {
 		}
 		return false
 	}
-	maxPx := circleui.MaxScrollPx(len(s.Widgets), s.Hero != "", m.Appearance.LargeTargets)
+	maxPx := circleui.ScreenMaxScrollPx(s, m.Appearance.LargeTargets)
 	if maxPx == 0 {
 		return false
 	}
 	old := f.ScrollPx
 	f.ScrollPx = math.Max(0, math.Min(maxPx, m.DragOriginPx-deltaY))
-	_, _, step, _ := circleui.RowMetrics(s.Hero != "", m.Appearance.LargeTargets)
+	_, _, step, _ := circleui.ScreenMetrics(s, m.Appearance.LargeTargets)
 	f.Scroll = int(f.ScrollPx / float64(step))
 	if !m.DragLastAt.IsZero() {
 		dt := at.Sub(m.DragLastAt).Seconds()
@@ -460,6 +464,7 @@ func (m *Model) WidgetDragEndAt(at time.Time) (bool, string) {
 					changed := m.WidgetEditValue != w.Value
 					m.cancelWidgetEditKeepDelta()
 					if changed {
+						m.recordWidgetInput(w, "int", m.WidgetEditValue, false)
 						return true, w.Action
 					}
 					return true, ""
@@ -539,9 +544,37 @@ func drawWidgetScreen(im *image.RGBA, m *Model) {
 			border = p.PrimaryText
 		}
 		outlineRect(im, r.Rect.Left, r.Rect.Top, r.Rect.Right, r.Rect.Bottom, border)
+		if w.Group != "" && strings.HasPrefix(w.ID, "rui.heading.") {
+			columns := max(8, (r.Rect.Right-r.Rect.Left-24)/12)
+			lines := wrapDetail(strings.ToUpper(w.Label), columns, 2)
+			for i, line := range lines {
+				textTheme(im, 240, r.Rect.Top+12+i*20, 1, line, p.Accent, true, m.Appearance)
+			}
+			continue
+		}
+		if s.Layout == "detail" && w.Kind == "label" {
+			content := w.Label
+			if w.Detail != "" {
+				content += " " + w.Detail
+			}
+			scale := 1
+			if m.Appearance.TextScale >= 125 {
+				scale = 2
+			}
+			columns := max(8, (r.Rect.Right-r.Rect.Left-24)/(6*scale))
+			lines := wrapDetail(strings.ToUpper(content), columns, max(1, (r.Rect.Bottom-r.Rect.Top-16)/18))
+			color := p.PrimaryText
+			if w.Disabled {
+				color = p.Disabled
+			}
+			for i, line := range lines {
+				textTheme(im, 240, r.Rect.Top+8+i*18, 1, line, color, true, m.Appearance)
+			}
+			continue
+		}
 		label := strings.ToUpper(w.Label)
-		if len(label) > 17 {
-			label = label[:17]
+		if runes := []rune(label); len(runes) > 17 {
+			label = string(runes[:17])
 		}
 		c := p.PrimaryText
 		if w.Kind == "button" && w.Variant == "primary" {

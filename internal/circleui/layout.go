@@ -103,6 +103,10 @@ func ScrollTo(items []wire.Widget, focus, scroll int, hero, largeTargets bool) i
 	if hero || largeTargets {
 		count = 2
 	}
+	return scrollToCount(items, focus, scroll, count)
+}
+
+func scrollToCount(items []wire.Widget, focus, scroll, count int) int {
 	if focus < scroll {
 		scroll = focus
 	}
@@ -147,10 +151,46 @@ func MaxScrollPx(n int, hero, largeTargets bool) float64 {
 }
 func VisiblePixelAt(items []wire.Widget, scrollPx float64, hero, largeTargets bool) []Row {
 	count, top, step, height := RowMetrics(hero, largeTargets)
+	return visiblePixelMetrics(items, scrollPx, count, top, step, height)
+}
+
+// ScreenMetrics is shared by production drawing, preview, hit-testing,
+// rotary focus and kinetic scrolling. Legacy and list screens retain their
+// established geometry; forms and detail pages reserve taller control rows.
+func ScreenMetrics(screen wire.Screen, largeTargets bool) (count, top, step, height int) {
+	count, top, step, height = RowMetrics(screen.Hero != "", largeTargets)
+	if screen.Hero != "" {
+		return
+	}
+	switch screen.Layout {
+	case "form":
+		count, top, step, height = 2, 159, 98, 86
+	case "detail":
+		count, top, step, height = 2, 159, 110, 98
+	}
+	return
+}
+
+func ScreenMaxScrollPx(screen wire.Screen, largeTargets bool) float64 {
+	count, _, step, _ := ScreenMetrics(screen, largeTargets)
+	return float64(max(0, len(screen.Widgets)-count) * step)
+}
+
+func ScreenScrollTo(screen wire.Screen, focus, scroll int, largeTargets bool) int {
+	count, _, _, _ := ScreenMetrics(screen, largeTargets)
+	return scrollToCount(screen.Widgets, focus, scroll, count)
+}
+
+func VisibleScreenPixelAt(screen wire.Screen, scrollPx float64, largeTargets bool) []Row {
+	count, top, step, height := ScreenMetrics(screen, largeTargets)
+	return visiblePixelMetrics(screen.Widgets, scrollPx, count, top, step, height)
+}
+
+func visiblePixelMetrics(items []wire.Widget, scrollPx float64, count, top, step, height int) []Row {
 	if len(items) == 0 {
 		return nil
 	}
-	scrollPx = math.Max(0, math.Min(MaxScrollPx(len(items), hero, largeTargets), scrollPx))
+	scrollPx = math.Max(0, math.Min(float64(max(0, len(items)-count)*step), scrollPx))
 	viewportEnd := top + (count-1)*step + height
 	rows := make([]Row, 0, count+2)
 	first := max(0, int(math.Floor(scrollPx/float64(step))))

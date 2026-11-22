@@ -20,6 +20,11 @@ func ValidateView(v View) error {
 	}
 	seen := map[string]bool{}
 	for _, s := range v.Screens {
+		switch s.Layout {
+		case "", "hero_list", "list", "form", "detail":
+		default:
+			return fmt.Errorf("unknown screen layout %q", s.Layout)
+		}
 		if s.ID == "" || len(s.ID) > 64 || seen[s.ID] {
 			return fmt.Errorf("invalid or duplicate screen ID %q", s.ID)
 		}
@@ -29,6 +34,9 @@ func ValidateView(v View) error {
 		}
 		ids := map[string]bool{}
 		for _, w := range s.Widgets {
+			if len(w.Group) > 64 || w.Group != "" && s.Layout == "" {
+				return fmt.Errorf("invalid widget section")
+			}
 			if w.ID == "" || len(w.ID) > 64 || ids[w.ID] {
 				return fmt.Errorf("invalid or duplicate widget ID %q", w.ID)
 			}

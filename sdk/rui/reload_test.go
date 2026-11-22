@@ -283,6 +283,7 @@ func TestRemovedActionsStayRegisteredButCannotDispatch(t *testing.T) {
 	original, _, r := loadDemo(t)
 	count, enabled, title := 5, true, "retained"
 	registerDemo(t, r, &count, &enabled, &title)
+	r.Dispatch(app.Event{Type: "visibility", Visible: true})
 	data := replacement(t, func(src []byte) []byte {
 		return bytes.Replace(src, []byte("onPress: demo.increment"), []byte("navigate: demo.settings"), 1)
 	})

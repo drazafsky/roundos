@@ -36,6 +36,8 @@ type Model struct {
 	WiFi                    WiFiState
 	Updates                 UpdateState
 	Views                   map[int]wire.View
+	ViewLayouts             map[int]uint64
+	widgetInput             *wire.UIEvent
 	Status                  map[int]string
 	LastTouch               image.Point
 	TouchUntil              time.Time
@@ -107,6 +109,11 @@ func (m *Model) Snapshot() *Model {
 	for k, v := range m.Views {
 		copyOf.Views[k] = wire.CopyView(v)
 	}
+	copyOf.ViewLayouts = make(map[int]uint64, len(m.ViewLayouts))
+	for page, revision := range m.ViewLayouts {
+		copyOf.ViewLayouts[page] = revision
+	}
+	copyOf.widgetInput = nil
 	copyOf.Status = make(map[int]string, len(m.Status))
 	for k, v := range m.Status {
 		copyOf.Status[k] = v
@@ -203,6 +210,10 @@ func (m *Model) Select(page int) bool {
 	return true
 }
 func (m *Model) SetView(id string, v wire.View) bool {
+	return m.SetViewRevision(id, v, 0)
+}
+
+func (m *Model) SetViewRevision(id string, v wire.View, layout uint64) bool {
 	if wire.ValidateView(v) != nil {
 		return false
 	}
@@ -210,6 +221,10 @@ func (m *Model) SetView(id string, v wire.View) bool {
 	if page == Home {
 		return false
 	}
+	if m.ViewLayouts == nil {
+		m.ViewLayouts = map[int]uint64{}
+	}
+	m.ViewLayouts[page] = layout
 	old, ok := m.Views[page]
 	status := m.Status[page]
 	if ok && reflect.DeepEqual(old, v) && status == "" {

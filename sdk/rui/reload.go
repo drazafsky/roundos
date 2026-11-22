@@ -134,6 +134,7 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	for id, actions := range candidate.dialogActions {
 		r.dialogContracts[id] = actions
 	}
+	r.cache = nil
 	r.intActions, r.boolActions, r.dialogActions = candidate.intActions, candidate.boolActions, candidate.dialogActions
 	r.dialogID = dialog
 	r.dialogNeedsClear = false

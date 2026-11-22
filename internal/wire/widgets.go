@@ -5,6 +5,7 @@ package wire
 // Widget IDs must remain stable across view updates to preserve focus.
 type Widget struct {
 	ID       string `json:"id"`
+	Group    string `json:"group,omitempty"`   // negotiated semantic section identity
 	Kind     string `json:"kind"`              // button, toggle, slider, label, progress, list_item, picker, time_picker, date_picker
 	Variant  string `json:"variant,omitempty"` // primary, secondary (default), tertiary
 	Label    string `json:"label"`
@@ -37,6 +38,7 @@ type Dialog struct {
 // root; Target links create a shell-owned, focus-restoring navigation stack.
 type Screen struct {
 	ID       string   `json:"id"`
+	Layout   string   `json:"layout,omitempty"` // negotiated shell-owned template
 	Title    string   `json:"title"`
 	Hero     string   `json:"hero,omitempty"`
 	Subtitle string   `json:"subtitle,omitempty"`

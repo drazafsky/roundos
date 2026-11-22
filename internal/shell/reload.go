@@ -99,7 +99,7 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 	if !compatible(m.EditingWidget) || !compatible(m.TouchSlider) {
 		m.cancelWidgetEdit()
 	}
-	changed := !okBefore || !okAfter || len(before.Widgets) != len(after.Widgets) || before.Hero != "" && after.Hero == "" || before.Hero == "" && after.Hero != ""
+	changed := !okBefore || !okAfter || before.Layout != after.Layout || len(before.Widgets) != len(after.Widgets) || before.Hero != "" && after.Hero == "" || before.Hero == "" && after.Hero != ""
 	if !changed {
 		for i, w := range before.Widgets {
 			if w.ID != after.Widgets[i].ID || !sameInputTarget(w, after.Widgets[i]) {
@@ -125,7 +125,7 @@ func (m *Model) revealReloadFocus(frame *NavFrame, screen wire.Screen, index int
 }
 
 func sameInputTarget(a, b wire.Widget) bool {
-	return a.Kind == b.Kind && a.Action == b.Action && a.Target == b.Target &&
+	return a.Kind == b.Kind && a.Group == b.Group && a.Action == b.Action && a.Target == b.Target &&
 		a.Disabled == b.Disabled && a.Min == b.Min && a.Max == b.Max && a.Step == b.Step && a.Wrap == b.Wrap
 }
 

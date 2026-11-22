@@ -23,10 +23,12 @@ type Event struct {
 	Gesture    *sdkgesture.Event
 	Contacts   []Contact
 	TextResult *wire.TextResult
+	UI         *UIEvent
 }
 
 // Contact contains the Linux multitouch tracking ID and 480x480 coordinates.
 type Contact = wire.Contact
+type UIEvent = wire.UIEvent
 
 func fromWire(m wire.Message) Event {
 	e := Event{Type: m.Type, Visible: m.Visible, Action: m.Action, Delta: m.Delta}
@@ -40,20 +42,41 @@ func fromWire(m wire.Message) Event {
 		result := *m.TextResult
 		e.TextResult = &result
 	}
+	if m.UIEvent != nil {
+		event := *m.UIEvent
+		e.UI = &event
+		// Preserve existing app event loops when rebuilt against this SDK.
+		e.Type = "input"
+		e.Action = event.Action
+		if event.Int != nil {
+			e.Delta = *event.Int
+		}
+	}
 	return e
 }
 
 type Client struct {
-	conn               net.Conn
-	mu                 sync.Mutex
-	events             chan Event
-	done               chan struct{}
-	once               sync.Once
-	last               *wire.View
-	secureEditor       string
-	textRequests       map[string]bool
-	trackEditorResults bool
-	editorResults      map[string]bool
+	conn                  net.Conn
+	mu                    sync.Mutex
+	events                chan Event
+	done                  chan struct{}
+	once                  sync.Once
+	last                  *wire.View
+	secureEditor          string
+	textRequests          map[string]bool
+	trackEditorResults    bool
+	editorResults         map[string]bool
+	capabilities          []string
+	selected              bool
+	legacy                *wire.View
+	acked, sent           *wire.View
+	transition, confirmed *wire.View
+	confirmation          chan struct{}
+	sentTransition        bool
+	sentConfirmed         bool
+	layout, revision      uint64
+	pending, forcePending bool
+	ackTimer              *time.Timer
 }
 
 func Connect() (*Client, error) {
@@ -74,7 +97,7 @@ func Connect() (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = wire.Write(conn, wire.Message{Version: wire.Version, Type: "hello", App: id, Token: token}); err != nil {
+	if err = wire.Write(conn, wire.Message{Version: wire.Version, Type: "hello", App: id, Token: token, Capabilities: wire.Capabilities()}); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -84,6 +107,13 @@ func Connect() (*Client, error) {
 }
 func (c *Client) readLoop() {
 	defer c.Close()
+	defer func() {
+		c.mu.Lock()
+		if c.ackTimer != nil {
+			c.ackTimer.Stop()
+		}
+		c.mu.Unlock()
+	}()
 	defer close(c.events)
 	defer close(c.done)
 	for {
@@ -91,7 +121,17 @@ func (c *Client) readLoop() {
 		if err != nil {
 			return
 		}
-		if msg.Type != "visibility" && msg.Type != "input" && msg.Type != "gesture" && msg.Type != "close" && msg.Type != "contacts" && msg.Type != "text_result" {
+		control, err := c.handleControl(msg)
+		if err != nil {
+			return
+		}
+		if control {
+			continue
+		}
+		if msg.Type == "ui_event" && !c.Supports(UIEventV1) {
+			continue
+		}
+		if msg.Type != "visibility" && msg.Type != "input" && msg.Type != "ui_event" && msg.Type != "gesture" && msg.Type != "close" && msg.Type != "contacts" && msg.Type != "text_result" {
 			continue
 		}
 		if msg.Type == "text_result" && msg.TextResult != nil {
@@ -125,14 +165,26 @@ func (c *Client) Publish(view wire.View) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err := c.validateDesiredLocked(view); err != nil {
+		return err
+	}
+	c.setDesiredLocked(view)
+	if c.reactiveLocked() {
+		return c.publishNextLocked(false)
+	}
+	return c.publishLegacyLocked(view)
+}
+
+func (c *Client) publishLegacyLocked(view wire.View) error {
+	view = c.transportViewLocked(view)
 	msg := wire.Message{Version: wire.Version, Type: "view", View: &view}
-	if c.last != nil {
-		if !reflect.DeepEqual(c.last.Screens, view.Screens) || !reflect.DeepEqual(c.last.Dialog, view.Dialog) {
+	if c.legacy != nil {
+		if !reflect.DeepEqual(c.legacy.Screens, view.Screens) || !reflect.DeepEqual(c.legacy.Dialog, view.Dialog) {
 			// Screens are full immutable snapshots: never apply scalar patches to a tree.
 			msg.Type = "view"
 			msg.View = &view
 		} else {
-			patch, changed := wire.DiffView(*c.last, view)
+			patch, changed := wire.DiffView(*c.legacy, view)
 			if changed == 0 {
 				return nil
 			}
@@ -143,11 +195,11 @@ func (c *Client) Publish(view wire.View) error {
 			}
 		}
 	}
-	if err := wire.Write(c.conn, msg); err != nil {
+	if err := c.writeLocked(msg); err != nil {
 		return err
 	}
 	v := wire.CopyView(view)
-	c.last = &v
+	c.legacy = &v
 	return nil
 }
 
@@ -156,7 +208,7 @@ func (c *Client) Publish(view wire.View) error {
 func (c *Client) Notify(title, body, priority, group, action string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "notify", Notification: &wire.Notification{Title: title, Body: body, Priority: priority, Group: group, Action: action}})
+	return c.writeLocked(wire.Message{Version: wire.Version, Type: "notify", Notification: &wire.Notification{Title: title, Body: body, Priority: priority, Group: group, Action: action}})
 }
 
 // SubscribeContacts opts into raw multi-contact snapshots. When an app cannot
@@ -164,7 +216,7 @@ func (c *Client) Notify(title, body, priority, group, action string) error {
 func (c *Client) SubscribeContacts(enabled bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "subscribe_contacts", RawContacts: enabled})
+	return c.writeLocked(wire.Message{Version: wire.Version, Type: "subscribe_contacts", RawContacts: enabled})
 }
 
 // RequestText opens a shell-owned editor for this foreground application.
@@ -182,7 +234,7 @@ func (c *Client) RequestText(id, label, initial string, secure bool) error {
 	if len(c.textRequests)+len(c.editorResults) >= 64 {
 		return errors.New("too many outstanding text requests")
 	}
-	err := wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
+	err := c.writeLocked(wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
 	if err == nil {
 		if c.textRequests == nil {
 			c.textRequests = make(map[string]bool)

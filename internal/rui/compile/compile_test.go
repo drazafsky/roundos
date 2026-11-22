@@ -31,7 +31,7 @@ func TestCompileFixtureDeterministically(t *testing.T) {
 			if e != nil || !bytes.Equal(a, b) {
 				t.Fatal("nonreproducible bundle", e)
 			}
-			if !bytes.Equal(a[:4], []byte("RUI1")) {
+			if !bytes.Equal(a[:4], []byte("RUI2")) {
 				t.Fatal("bad magic")
 			}
 			verified, e := Verify(a)
@@ -75,6 +75,38 @@ func TestVerifyManifestAndMapTampering(t *testing.T) {
 	b, _ = bundle.Encode(f)
 	if _, e = Verify(b); e == nil || !strings.Contains(e.Error(), "source map") {
 		t.Fatalf("accepted tampered source map: %v", e)
+	}
+}
+
+func TestDependenciesAreStoredVerifiedAndDerivedForLegacyBundles(t *testing.T) {
+	_, file, err := Compile(input(t, "timer.rui.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Dependencies["timer.minutes"]) == 0 {
+		t.Fatal("compiled dependency indices missing")
+	}
+	file.Format = bundle.LegacyFormat
+	file.Dependencies = nil
+	legacy, err := bundle.Encode(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := Verify(legacy)
+	if err != nil || len(verified.Dependencies["timer.minutes"]) == 0 {
+		t.Fatal("legacy dependency derivation failed", err)
+	}
+	_, file, err = Compile(input(t, "timer.rui.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file.Dependencies["timer.minutes"][0].Screen = 99
+	tampered, err := bundle.Encode(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(tampered); err == nil || !strings.Contains(err.Error(), "dependencies") {
+		t.Fatal("checksum-valid dependency tampering accepted", err)
 	}
 }
 func TestValidationSurvivesCompiler(t *testing.T) {

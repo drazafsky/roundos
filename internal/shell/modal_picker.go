@@ -140,6 +140,7 @@ func (m *Model) pickerCommit() (bool, string) {
 		return true, ""
 	}
 	m.WidgetDelta = value
+	m.recordWidgetInput(w, "int", value, false)
 	return true, action
 }
 func (m *Model) pickerTap(x, y int) (bool, string) {

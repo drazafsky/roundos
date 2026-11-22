@@ -28,7 +28,8 @@ Usage:
   roundui dev <layout.rui.yaml> -session /private/session.json [-ssh user@host] [-remote-tool /path/roundui] [-sudo-user app-user]
 
 The preview uses the existing v7 shell circular renderer and
-inert sample state; its form/detail/list template refinements await M5.
+inert sample state and production template geometry. Legacy shells receive
+the documented row-list compatibility fallback without template negotiation.
 `
 
 func main() {
@@ -118,7 +119,7 @@ func run(args []string, stdout io.Writer) error {
 		return nil
 	case "inspect", "preview":
 		var f *bundle.File
-		if bytes.HasPrefix(src, []byte("RUI1")) {
+		if bytes.HasPrefix(src, []byte("RUI1")) || bytes.HasPrefix(src, []byte("RUI2")) {
 			f, err = compile.Verify(src)
 		} else {
 			_, f, err = compile.Compile(src)
@@ -198,7 +199,7 @@ func run(args []string, stdout io.Writer) error {
 		if len(state.Missing()) > 0 {
 			fmt.Fprintf(stdout, "Missing binding samples (using inert preview defaults): %s\n", strings.Join(state.Missing(), ", "))
 		}
-		fmt.Fprintln(stdout, "Note: v7 shell renders list/form/detail as the same row-list geometry; distinct template treatment and live binding dispatch are not implemented in M2.")
+		fmt.Fprintln(stdout, "Templates require negotiated rui_templates_v1; older shells receive the row-list compatibility fallback.")
 		return nil
 	}
 	return errors.New("unreachable command")
@@ -213,18 +214,20 @@ type screenInfo struct {
 	Groups, EffectiveWidgets int
 }
 type inspectInfo struct {
-	BundleFormat  string        `json:"bundleFormat"`
-	Schema        string        `json:"schema"`
-	ApplicationID string        `json:"applicationID"`
-	SourceSHA256  string        `json:"sourceSHA256"`
-	Screens       []screenInfo  `json:"screens"`
-	Bindings      []bindingInfo `json:"bindings"`
-	Actions       any           `json:"actions"`
-	SourceMap     any           `json:"sourceMap"`
+	BundleFormat  string                         `json:"bundleFormat"`
+	Schema        string                         `json:"schema"`
+	ApplicationID string                         `json:"applicationID"`
+	SourceSHA256  string                         `json:"sourceSHA256"`
+	Screens       []screenInfo                   `json:"screens"`
+	Bindings      []bindingInfo                  `json:"bindings"`
+	Actions       any                            `json:"actions"`
+	SourceMap     any                            `json:"sourceMap"`
+	Dependencies  map[string][]bundle.Dependency `json:"dependencies"`
 }
 
 func inspect(f *bundle.File) inspectInfo {
 	d := inspectInfo{BundleFormat: f.Format, Schema: f.Document.Schema, ApplicationID: f.Document.Application.ID, SourceSHA256: f.SourceSHA256, Actions: f.Manifest.Actions, SourceMap: f.SourceMap, Screens: []screenInfo{}, Bindings: []bindingInfo{}}
+	d.Dependencies = f.Dependencies
 	for _, sc := range f.Document.Screens {
 		n := 0
 		for _, g := range sc.Groups {

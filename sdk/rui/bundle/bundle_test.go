@@ -48,7 +48,7 @@ func TestRejectUnknownFieldDespiteMatchingChecksum(t *testing.T) {
 	b, _ := json.Marshal(f)
 	b = bytes.Replace(b, []byte(`"format":"`), []byte(`"unknown":5,"format":"`), 1)
 	out := make([]byte, 8+len(b)+32)
-	copy(out[:4], "RUI1")
+	copy(out[:4], "RUI2")
 	binary.BigEndian.PutUint32(out[4:8], uint32(len(b)))
 	copy(out[8:], b)
 	sum := sha256.Sum256(b)

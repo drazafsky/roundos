@@ -163,9 +163,23 @@ func (m *Model) Select(page int) bool {
 		if m.Editor.Secure {
 			m.Editor.ClearSensitive()
 		}
-		if m.EditorAppID != "" && m.PendingEditorResult == nil {
-			m.PendingEditorResult = &wire.TextResult{ID: m.EditorRequestID, Canceled: true}
-			m.PendingEditorApp = m.EditorAppID
+		if m.EditorAppID != "" {
+			if m.PendingEditorResult == nil {
+				m.PendingEditorResult = &wire.TextResult{ID: m.EditorRequestID, Canceled: true}
+				m.PendingEditorApp = m.EditorAppID
+				m.Editor.Cancel()
+			}
+			// The result already owns its routing IDs. A saved shell return
+			// path must not resurrect this completed app editor request.
+			m.EditorAppID, m.EditorRequestID = "", ""
+			for i, parent := range m.ShellParents {
+				if parent == TextEditor || parent == DiscardPrompt {
+					m.ShellParents[i] = m.EditorParent
+				}
+			}
+			if m.AccessParent == TextEditor || m.AccessParent == DiscardPrompt {
+				m.AccessParent = m.EditorParent
+			}
 		}
 	}
 	if page != m.Page {

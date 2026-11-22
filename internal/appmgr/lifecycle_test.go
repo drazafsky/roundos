@@ -91,3 +91,19 @@ func TestClosedCurrentPeerCannotPublishStartupView(t *testing.T) {
 		t.Fatal("closed connection published startup data before cleanup")
 	}
 }
+
+func TestUndeliverableEditorResultRetiresConnection(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	e := &endpoint{app: wire.ClockID, conn: conn, send: make(chan wire.Message, 1), closed: make(chan struct{})}
+	e.send <- wire.Message{Version: wire.Version, Type: "gesture"}
+	m := &Manager{peers: map[string]*endpoint{wire.ClockID: e}}
+	if m.TextResult(wire.ClockID, wire.TextResult{ID: "title", Canceled: true}) {
+		t.Fatal("full control queue reported delivery")
+	}
+	select {
+	case <-e.closed:
+	default:
+		t.Fatal("lost editor result left connection live")
+	}
+}

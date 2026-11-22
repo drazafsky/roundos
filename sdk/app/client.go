@@ -83,6 +83,7 @@ func Connect() (*Client, error) {
 	return c, nil
 }
 func (c *Client) readLoop() {
+	defer c.Close()
 	defer close(c.events)
 	defer close(c.done)
 	for {

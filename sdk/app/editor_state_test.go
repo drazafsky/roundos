@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -143,5 +144,25 @@ func TestTrackedEditorResultBlocksReloadUntilApplicationDispatch(t *testing.T) {
 	c.AcknowledgeTextResult("title")
 	if c.TextEditorActive() {
 		t.Fatal("dispatched result still blocks reload")
+	}
+}
+
+func TestReadFailureClosesClientConnection(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	c := &Client{conn: conn, events: make(chan Event, 4), done: make(chan struct{})}
+	defer c.Close()
+	go c.readLoop()
+	if _, err := peer.Write([]byte{0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.done:
+	case <-time.After(time.Second):
+		t.Fatal("invalid frame did not end reader")
+	}
+	peer.SetReadDeadline(time.Now().Add(time.Second))
+	if _, err := peer.Read(make([]byte, 1)); err != io.EOF {
+		t.Fatal("failed reader left its connection open", err)
 	}
 }

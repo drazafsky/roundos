@@ -427,7 +427,13 @@ func (m *Manager) TextResult(id string, result wire.TextResult) bool {
 	if e == nil {
 		return false
 	}
-	return e.enqueue(wire.Message{Version: wire.Version, Type: "text_result", TextResult: &result})
+	if !e.enqueue(wire.Message{Version: wire.Version, Type: "text_result", TextResult: &result}) {
+		// Dropping this terminal result would leave a live client waiting
+		// forever. Retire the connection so normal app recovery can run.
+		e.close()
+		return false
+	}
+	return true
 }
 func (m *Manager) Input(id, action string, delta int) bool {
 	m.mu.Lock()

@@ -14,13 +14,25 @@ import (
 const UpdatesPage = WiFiConfirm + 1
 
 type UpdateState struct {
-	Status   update.Status
-	Ready    bool
-	Focus    int
-	Pending  *update.Command
-	Message  string
-	InFlight uint64
-	NextID   uint64
+	SeenSequence         uint64
+	PendingRelease       *update.Release
+	PendingManual        bool
+	Notice               *update.Release
+	ReturnPage           int
+	PromptFocus          int
+	NotesOffset          int
+	NotesDragOrigin      int
+	NotesDragging        bool
+	Notes                *notesDocument
+	IgnoreRequestID      uint64
+	IgnoreRequestVersion string
+	Status               update.Status
+	Ready                bool
+	Focus                int
+	Pending              *update.Command
+	Message              string
+	InFlight             uint64
+	NextID               uint64
 }
 
 func (m *Model) OpenUpdates() bool {
@@ -29,13 +41,27 @@ func (m *Model) OpenUpdates() bool {
 }
 
 func (m *Model) SetUpdateStatus(status update.Status) bool {
+	oldPage := m.Page
 	m.Updates.Status = status
 	if status.LastCommandID == m.Updates.InFlight {
 		m.Updates.InFlight = 0
 	}
 	m.Updates.Ready = true
 	m.Updates.Message = ""
-	return m.Page == UpdatesPage
+	m.observeUpdateResult(status)
+	if m.Updates.IgnoreRequestID != 0 && status.LastCommandID == m.Updates.IgnoreRequestID {
+		version := m.Updates.IgnoreRequestVersion
+		m.Updates.IgnoreRequestID = 0
+		m.Updates.IgnoreRequestVersion = ""
+		if status.OperationErr == nil && status.IgnoredVersion == version {
+			if m.Updates.Notice != nil && m.Updates.Notice.Version == version {
+				m.retireUpdatePrompt()
+			}
+		} else if m.Updates.Notice != nil && m.Updates.Notice.Version == version {
+			m.Updates.Message = "COULD NOT IGNORE RELEASE - TRY AGAIN"
+		}
+	}
+	return oldPage == UpdatesPage || oldPage == UpdatePrompt || oldPage == ReleaseNotes || oldPage != m.Page
 }
 
 func (m *Model) TakeUpdateRequest() *update.Command {
@@ -46,6 +72,8 @@ func (m *Model) TakeUpdateRequest() *update.Command {
 
 func (m *Model) UpdateRequestFailed() {
 	m.Updates.InFlight = 0
+	m.Updates.IgnoreRequestID = 0
+	m.Updates.IgnoreRequestVersion = ""
 	m.Updates.Message = "UPDATE SERVICE BUSY - TRY AGAIN"
 }
 

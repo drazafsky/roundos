@@ -59,7 +59,7 @@ func main() {
 	recoverUpdate := flag.Bool("recover-update", false, "recover interrupted managed update state before startup")
 	backend := flag.String("backend", "png", "png (safe preview) or drm")
 	output := flag.String("output", "roundos-preview.png", "PNG preview path")
-	previewPage := flag.String("preview-page", "home", "PNG preview page: home, settings, updates, wifi, clock, clock-options, clock-details, clock-gallery, timer, timer-duration, timer-picker, timer-dialog, touch, notifications, switcher, editor, accessibility")
+	previewPage := flag.String("preview-page", "home", "PNG preview page: home, settings, updates, update-prompt, release-notes, wifi, clock, clock-options, clock-details, clock-gallery, timer, timer-duration, timer-picker, timer-dialog, touch, notifications, switcher, editor, accessibility")
 	previewTheme := flag.String("preview-theme", "dark", "PNG preview theme: dark, light or contrast")
 	card := flag.String("card", "/dev/dri/card0", "DRM device")
 	connector := flag.String("connector", "DPI-1", "DRM connector")
@@ -205,6 +205,13 @@ func main() {
 			now := time.Now()
 			model.SetUpdateStatus(update.Status{Preferences: update.DefaultPreferences(), LastAttempt: now.Add(-5 * time.Minute), NextManual: now.Add(10 * time.Minute), NextAutomatic: now.Add(24 * time.Hour), Result: update.CheckResult{Status: update.UpToDate}})
 			model.OpenUpdates()
+		} else if *previewPage == "update-prompt" || *previewPage == "release-notes" {
+			model.SetUpdateStatus(update.Status{Preferences: update.DefaultPreferences(), Sequence: 1, Manual: true, Result: update.CheckResult{Status: update.Available, Release: &update.Release{Version: "0.6.0", Notes: "# RoundOS 0.6.0\n\nSettings now offers automatic update checks and a manual Check now action.\n\nChoose how often to check: from every 15 minutes to every 24 hours.\n\nUpdates install only when you choose Install. You can cancel a notice, read these notes again, or ignore the current release.\n\nManaged startup verifies that the new version is ready and restores the previous release if startup fails."}}})
+			model.MaybePromptUpdate()
+			if *previewPage == "release-notes" {
+				model.Updates.PromptFocus = 2
+				model.UpdatePromptActivate()
+			}
 		} else if *previewPage == "wifi" {
 			model.OpenSettings()
 			model.OpenWiFi()
@@ -494,6 +501,7 @@ func main() {
 	backlightOff := false
 	gestures := gesture.New()
 	suppressTouch := false
+	activeContacts := 0
 	var lastTouchTrace time.Time
 	lastTouchCount := -1
 	suppressButton := false
@@ -566,13 +574,20 @@ func main() {
 		case gesture.DragStart:
 			originX := int(ev.X - ev.DX)
 			originY := int(ev.Y - ev.DY)
+			if model.ReleaseNotesDragStart(originX, originY) {
+				return model.ReleaseNotesDragMove(ev.DY) || changed
+			}
 			changed = model.WidgetDragStart(originX, originY) || changed
 			changed = model.WidgetDragMoveAt(int(ev.X), int(ev.Y), ev.DY, ev.At) || changed
 		case gesture.Drag:
+			if model.Page == shell.ReleaseNotes {
+				return model.ReleaseNotesDragMove(ev.DY) || changed
+			}
 			changed = model.WidgetDragMoveAt(int(ev.X), int(ev.Y), ev.DY, ev.At) || changed
 		case gesture.Swipe:
 			changed = model.WiFiSwipe(ev.Direction) || changed
 		case gesture.DragEnd:
+			model.Updates.NotesDragging = false
 			var appAction string
 			var updated bool
 			updated, appAction = model.WidgetDragEndAt(ev.At)
@@ -581,6 +596,7 @@ func main() {
 				sendInput(target, appAction, model.WidgetDelta)
 			}
 		case gesture.Cancel:
+			model.Updates.NotesDragging = false
 			model.StopKinetic()
 			model.CancelWidgetDrag()
 		case gesture.TwoSwipe:
@@ -599,6 +615,16 @@ func main() {
 		flushText()
 		flushDialog()
 		flushWiFi()
+		if activeContacts == 0 && buttonDownAt.IsZero() && model.MaybePromptUpdate() {
+			gestures.Reset()
+			router.Reset()
+			if err := manager.SetForeground(model.AppID(model.Page)); err != nil {
+				log.Printf("update prompt foreground selection: %v", err)
+			}
+			if !backlightOff {
+				render(time.Time{})
+			}
+		}
 		if !backlightOff && updatesRefreshDue(model.Page, now, updatesRefreshAt) {
 			render(time.Time{})
 		}
@@ -679,7 +705,24 @@ func main() {
 			} else if status.Sequence > 0 && !status.Busy {
 				log.Printf("release check: %s", status.Result.Status)
 			}
-			if model.SetUpdateStatus(status) && !backlightOff {
+			oldPage := model.Page
+			changed := model.SetUpdateStatus(status)
+			if oldPage != model.Page {
+				if activeContacts > 0 {
+					suppressTouch = true
+				}
+				if !buttonDownAt.IsZero() {
+					suppressButton = true
+					buttonDownAt = time.Time{}
+					buttonStage = 0
+				}
+				gestures.Reset()
+				router.Reset()
+				if err := manager.SetForeground(model.AppID(model.Page)); err != nil {
+					log.Printf("update result foreground selection: %v", err)
+				}
+			}
+			if changed && !backlightOff {
 				render(time.Time{})
 			}
 		case err := <-presenterLoop.Errors():
@@ -695,6 +738,12 @@ func main() {
 			}
 			return
 		case a := <-actions:
+			if a.kind == "touch_frame" {
+				activeContacts = len(a.frame.Contacts)
+				if a.frame.Canceled {
+					activeContacts = 0
+				}
+			}
 			if timer != nil {
 				timer.Stop()
 			}

@@ -68,6 +68,12 @@ func (m *Model) OpenSwitcher() bool {
 	return true
 }
 func (m *Model) Back() bool {
+	if m.Page == ReleaseNotes {
+		return m.Select(UpdatePrompt)
+	}
+	if m.Page == UpdatePrompt {
+		return m.DismissUpdate()
+	}
 	if m.Page == UpdatesPage {
 		return m.Select(Settings)
 	}

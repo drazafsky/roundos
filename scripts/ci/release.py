@@ -220,11 +220,17 @@ def publish(output, release_version, sha, *, stable=False, notes=None, before_pu
         for asset in assets:
             if digest(Path(tmp) / asset) != digest(output / asset):
                 raise ValueError(f'Uploaded asset differs: {asset}')
-    kind = ['--prerelease=false', '--latest'] if stable else ['--prerelease', '--latest=false']
+    kind = ['--prerelease=false', '--latest', '--target', sha] if stable else ['--prerelease', '--latest=false']
     if before_publish:
         before_publish()
-    if stable and stable_tag_sha(prefix, tag) not in (None, sha):
-        raise ValueError('Stable tag changed before publication')
+    if stable:
+        draft = json.loads(gh('release', 'view', tag, '--json', 'isDraft,isPrerelease,targetCommitish,assets'))
+        if not draft['isDraft'] or draft['isPrerelease'] or draft['targetCommitish'] != sha:
+            raise ValueError('Stable draft identity changed before publication')
+        if {asset['name'] for asset in draft['assets']} != set(assets):
+            raise ValueError('Stable draft assets changed before publication')
+        if stable_tag_sha(prefix, tag) not in (None, sha):
+            raise ValueError('Stable tag changed before publication')
     gh('release', 'edit', tag, '--draft=false', *kind)
     # Confirm GitHub created the tag at the exact tested merge commit.
     published_sha = stable_tag_sha(prefix, tag) if stable else api(f'{prefix}/commits/{tag}')['sha']

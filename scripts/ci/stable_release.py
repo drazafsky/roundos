@@ -53,11 +53,16 @@ class GitHub:
         return release.api(f'{self.prefix}/{path}', missing_ok=missing_ok)
 
     def pages(self, path, *, key=None):
-        self.reserve_reads()
         separator = '&' if '?' in path else '?'
-        pages = json.loads(release.gh('api', f'{self.prefix}/{path}{separator}per_page=100', '--paginate', '--slurp'))
-        self.reserve_reads(max(0, len(pages) - 1))
-        return [item for page in pages for item in (page[key] if key else page)]
+        items = []
+        page = 1
+        while True:
+            response = self.get(f'{path}{separator}per_page=100&page={page}')
+            batch = response[key] if key else response
+            items.extend(batch)
+            if len(batch) < 100:
+                return items
+            page += 1
 
     def trusted(self, login):
         if login not in self.permissions:
@@ -102,7 +107,7 @@ class GitHub:
                   ('Tests', 'Host DRM build', 'ARMv7 build and package')), 'Required CI jobs did not pass')
 
 
-def eligibility(github, number):
+def declaration(github, number):
     parent = github.get(f'issues/{number}')
     labels = {label['name'] for label in parent['labels']}
     block(LABEL in labels and 'pull_request' not in parent, 'Parent is not opted in')
@@ -116,6 +121,11 @@ def eligibility(github, number):
     block(isinstance(sha, str) and bool(re.fullmatch(r'[0-9a-f]{40}', sha)), 'Expected a full commit SHA')
     block(type(acceptance) is int and acceptance > 0, 'Expected an acceptance issue number')
     block(all(int(part) <= 2**64 - 1 for part in version.split('.')), 'Version component is too large')
+    return version, sha, acceptance
+
+
+def eligibility(github, number, config=None):
+    version, sha, acceptance = config if config else declaration(github, number)
     target = tuple(map(int, version.split('.')))
     for existing in github.pages('releases'):
         tag = existing['tag_name'].removeprefix('v')
@@ -153,14 +163,14 @@ def eligibility(github, number):
                   f'Issue #{child_number} is not completed')
             descendants[child_number] = child
             has_children = visit(child_number)
-            prs = github.closing_prs(child_number)
+            prs = [pr for pr in github.closing_prs(child_number) if pr['merged']]
             manual = MANUAL_LABEL in {label['name'] for label in child['labels']}
             if manual:
                 block(github.trusted(child['user']['login']), 'Manual verification issues must be authored by a maintainer')
             block(has_children or child_number == acceptance or manual or bool(prs),
                   f'Implementation issue #{child_number} has no closing PR')
             for pr in prs:
-                block(pr['merged'] and pr['baseRefName'] == 'main' and pr['repository']['nameWithOwner'] == github.repo
+                block(pr['baseRefName'] == 'main' and pr['repository']['nameWithOwner'] == github.repo
                       and pr['mergeCommit'] and github.included(pr['mergeCommit']['oid'], sha),
                       f'PR #{pr["number"]} is not merged into the selected release commit')
         return bool(children)
@@ -195,18 +205,19 @@ def candidates(github):
         if 'pull_request' in issue:
             continue
         try:
-            plan = eligibility(github, issue['number'])
-            tag = 'v' + plan['version']
+            config = declaration(github, issue['number'])
+            version, sha, _ = config
+            tag = 'v' + version
             existing = github.get(f'releases/tags/{tag}', missing_ok=True)
             if existing and not existing['draft']:
-                block(not existing['prerelease'] and existing['target_commitish'] == plan['sha'], 'Existing release identity differs')
+                block(not existing['prerelease'] and existing['target_commitish'] == sha, 'Existing release identity differs')
                 block(github.get(f'git/ref/tags/{tag}', missing_ok=True) is not None
-                      and github.get(f'commits/refs/tags/{tag}')['sha'] == plan['sha'], 'Published tag points at a different commit')
-                block({asset['name'] for asset in existing['assets']} == release.asset_names(plan['version']),
+                      and github.get(f'commits/refs/tags/{tag}')['sha'] == sha, 'Published tag points at a different commit')
+                block({asset['name'] for asset in existing['assets']} == release.asset_names(version),
                       'Published stable release has missing or unexpected assets')
                 print(f'#{issue["number"]}: already published', file=sys.stderr)
                 continue
-            ready.append(plan)
+            ready.append(eligibility(github, issue['number'], config))
         except Blocked as error:
             print(f'#{issue["number"]}: {error}', file=sys.stderr)
     return sorted(ready, key=lambda item: tuple(map(int, item['version'].split('.'))))

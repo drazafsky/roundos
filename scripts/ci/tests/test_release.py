@@ -111,6 +111,9 @@ class ReleaseTests(unittest.TestCase):
                     shutil.copyfile(self.output / asset, target / asset)
                 if corrupt:
                     (target / 'release.json').write_text('{}')
+            if args[:2] == ('release', 'view'):
+                return json.dumps({'isDraft': True, 'isPrerelease': not stable, 'targetCommitish': SHA,
+                                   'assets': [{'name': name} for name in assets]})
             return ''
         return calls, api, gh
 
@@ -214,6 +217,21 @@ class ReleaseTests(unittest.TestCase):
         with mock.patch.object(release, 'api', side_effect=tag_appears), mock.patch.object(release, 'gh', side_effect=gh), \
                 mock.patch.dict(os.environ, GH_REPO='owner/repo'):
             with self.assertRaisesRegex(ValueError, 'Stable tag changed'):
+                release.publish(self.output, '0.6.0', SHA, stable=True)
+        self.assertFalse(any('--draft=false' in call for call in calls))
+
+    def test_draft_retargeted_during_upload_cannot_publish(self):
+        calls, api, gh = self.publish_fixture(stable=True)
+        def retarget(*args):
+            output = gh(*args)
+            if args[:2] == ('release', 'view'):
+                draft = json.loads(output)
+                draft['targetCommitish'] = 'b' * 40
+                return json.dumps(draft)
+            return output
+        with mock.patch.object(release, 'api', side_effect=api), mock.patch.object(release, 'gh', side_effect=retarget), \
+                mock.patch.dict(os.environ, GH_REPO='owner/repo'):
+            with self.assertRaisesRegex(ValueError, 'draft identity changed'):
                 release.publish(self.output, '0.6.0', SHA, stable=True)
         self.assertFalse(any('--draft=false' in call for call in calls))
 

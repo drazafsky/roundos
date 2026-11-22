@@ -163,7 +163,7 @@ class EligibilityTests(unittest.TestCase):
             self.ready()
 
     def test_implementation_requires_merged_main_pr_in_release_commit(self):
-        for field, value in [('merged', False), ('baseRefName', 'feature'), ('mergeCommit', None),
+        for field, value in [('baseRefName', 'feature'), ('mergeCommit', None),
                              ('repository', {'nameWithOwner': 'other/repo'})]:
             with self.subTest(field=field):
                 self.github = Fixture()
@@ -174,7 +174,11 @@ class EligibilityTests(unittest.TestCase):
         self.github.excluded.add((MERGE, SHA))
         with self.assertRaisesRegex(stable.Blocked, 'PR #10'):
             self.ready()
-        self.github.prs[2] = []
+        self.github.excluded.clear()
+        abandoned = dict(self.github.prs[2][0], merged=False)
+        self.github.prs[2].append(abandoned)
+        self.ready()
+        self.github.prs[2] = [abandoned]
         with self.assertRaisesRegex(stable.Blocked, 'no closing PR'):
             self.ready()
 
@@ -219,9 +223,11 @@ class EligibilityTests(unittest.TestCase):
                                  'assets': [{'name': name} for name in stable.release.asset_names(VERSION)]}
         for tag_sha, expected in [(SHA, 'already published'), (MERGE, 'different commit'), (None, 'different commit')]:
             self.github.tag_sha = tag_sha
-            with self.subTest(tag_sha=tag_sha), mock.patch.object(sys, 'stderr') as stderr:
+            with self.subTest(tag_sha=tag_sha), mock.patch.object(sys, 'stderr') as stderr, \
+                    mock.patch.object(self.github, 'ci_passed') as ci:
                 self.assertEqual(stable.candidates(self.github), [])
                 self.assertTrue(any(expected in str(call) for call in stderr.write.call_args_list))
+                ci.assert_not_called()
         self.github.tag_sha = SHA
         self.github.published['assets'].pop()
         with mock.patch.object(sys, 'stderr') as stderr:
@@ -261,12 +267,11 @@ class GitHubTests(unittest.TestCase):
     def test_caps_api_reads(self):
         github = stable.GitHub(REPO)
         github.reads_left = 2
-        with mock.patch.object(stable.release, 'gh', return_value='[[],[]]'), \
-                mock.patch.object(stable.release, 'api') as api:
-            github.pages('issues')
+        with mock.patch.object(stable.release, 'api', return_value=[{}] * 100) as api:
             with self.assertRaisesRegex(stable.Blocked, 'API request budget'):
-                github.get('issues/1')
-            api.assert_not_called()
+                github.pages('issues')
+            self.assertEqual(api.call_count, 2)
+            self.assertTrue(api.call_args.args[0].endswith('page=2'))
     def test_noncollaborator_is_untrusted_rather_than_failing_discovery(self):
         with mock.patch.object(stable.release, 'api', return_value=None) as api:
             self.assertFalse(stable.GitHub(REPO).trusted('outsider'))
@@ -291,9 +296,9 @@ class GitHubTests(unittest.TestCase):
                 github.included(SHA, 'main')
 
     def test_pagination_is_flattened_and_query_is_preserved(self):
-        with mock.patch.object(stable.release, 'gh', return_value='[[{"number":1}],[{"number":2}]]') as gh:
-            self.assertEqual(len(stable.GitHub(REPO).pages('issues?state=all')), 2)
-            self.assertIn('state=all&per_page=100', gh.call_args.args[1])
+        with mock.patch.object(stable.release, 'api', side_effect=[[{'number': 1}] * 100, [{'number': 2}]]) as api:
+            self.assertEqual(len(stable.GitHub(REPO).pages('issues?state=all')), 101)
+            self.assertIn('state=all&per_page=100&page=2', api.call_args.args[0])
 
     def test_ci_uses_latest_main_push_attempt_and_requires_jobs(self):
         github = stable.GitHub(REPO)
@@ -301,13 +306,11 @@ class GitHubTests(unittest.TestCase):
                    head_branch='main', status='completed', conclusion='success')
         jobs = [{'name': name, 'conclusion': 'success'} for name in
                 ('Tests', 'Host DRM build', 'ARMv7 build and package')]
-        with mock.patch.object(github, 'get', return_value={'workflow_runs': [run]}) as get, \
-                mock.patch.object(stable.release, 'gh', return_value=json.dumps([{'jobs': jobs}])):
+        with mock.patch.object(github, 'get', side_effect=[{'workflow_runs': [run]}, {'jobs': jobs}]) as get:
             github.ci_passed(SHA)
-            self.assertIn('event=push&branch=main&head_sha=' + SHA, get.call_args.args[0])
+            self.assertIn('event=push&branch=main&head_sha=' + SHA, get.call_args_list[0].args[0])
             jobs.pop()
-        with mock.patch.object(github, 'get', return_value={'workflow_runs': [run]}), \
-                mock.patch.object(stable.release, 'gh', return_value=json.dumps([{'jobs': jobs}])):
+        with mock.patch.object(github, 'get', side_effect=[{'workflow_runs': [run]}, {'jobs': jobs}]):
             with self.assertRaisesRegex(stable.Blocked, 'Required CI jobs'):
                 github.ci_passed(SHA)
         failed = dict(run, run_attempt=3, conclusion='failure')

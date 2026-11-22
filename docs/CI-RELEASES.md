@@ -107,7 +107,7 @@ remain open while the last milestone finishes; closing it as not planned blocks
 publication.
 
 Every implementation leaf needs a GitHub closing PR merged into `main`, and
-every closing PR must be included in the selected commit. Use closing keywords
+every merged closing PR must be included in the selected commit. Use closing keywords
 in the PR description so GitHub records the relationship. For an issue devoted
 only to manual verification, a maintainer can use `release:verification` instead
 of a closing PR. Such issues must also be maintainer-authored. The designated
@@ -136,9 +136,9 @@ The evidence URL must point into this repository and identify the actual Pi
 results: display/touch, Wi-Fi, boot, performance, installation and recovery as
 applicable to that release. The comment is an operator attestation, not a result
 inferred by CI. Version and commit must match the parent exactly. Reopen the
-acceptance issue, delete its acceptance comment, or remove `release:stable` to
-withdraw acceptance before publication. Editing only the evidence text or
-adding a failure comment does not revoke an earlier passing attestation.
+acceptance issue or remove `release:stable` to withdraw acceptance before
+publication. To withdraw acceptance while keeping the issue closed and the
+label in place, remove every passing attestation for that version and commit.
 
 The selected commit must be on main, with a successful **CI and prerelease**
 push run and successful Tests, Host DRM build, and ARMv7 build and package jobs.

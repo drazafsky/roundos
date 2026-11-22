@@ -10,7 +10,7 @@ import time
 
 from workflow_github import GitHub, REPO, ToolError, gh, positive
 
-PR_FIELDS = 'state,isDraft,body,headRefOid,mergeStateStatus,assignees,closingIssuesReferences,statusCheckRollup'
+PR_FIELDS = 'state,isDraft,body,headRefOid,mergeStateStatus,assignees,statusCheckRollup'
 COPILOT = {'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'}
 CI_JOBS = {'Tests', 'Host DRM build', 'ARMv7 build and package'}
 THREAD_QUERY = '''query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
@@ -25,16 +25,29 @@ def pr_data(github, number):
     return json.loads(gh('pr', 'view', str(number), '--repo', github.repo, '--json', PR_FIELDS))
 
 
+def description_prose(body):
+    fence = None
+    lines = []
+    for line in re.sub(r'<!--.*?-->', '', body or '', flags=re.S).splitlines():
+        if fence:
+            if re.fullmatch(r' {0,3}' + re.escape(fence[0]) + '{' + str(len(fence)) + r',}[ \t]*', line):
+                fence = None
+            continue
+        match = re.match(r'^ {0,3}(`{3,}(?!`)[^`]*$|~{3,})', line)
+        if match:
+            fence = re.match(r'`+|~+', match[1])[0]
+        else:
+            lines.append(line)
+    return re.sub(r'(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)', '', '\n'.join(lines))
+
+
 def tracked_issues(github, pr):
-    # Closing references are resolved by GitHub. Also accept local issue
-    # mentions and full issue URLs for PRs that contribute without closing.
+    # The rules require a reference in the description, even if the issue
+    # was also linked in the sidebar. Accept local mentions and issue URLs.
     repo = re.escape(github.repo)
-    body = re.sub(r'(?ms)^ {0,3}(?:`{3,}|~{3,}).*?^ {0,3}(?:`{3,}|~{3,})[^\n]*', '', pr['body'] or '')
-    body = re.sub(r'<!--.*?-->|`[^`\n]*`', '', body, flags=re.S)
+    body = description_prose(pr['body'])
     pattern = rf'(?:https://github\.com/{repo}/issues/|(?<![\w/#-])(?:{repo})?#)([1-9][0-9]*)\b'
     numbers = {int(value) for value in re.findall(pattern, body, re.I)}
-    prefix = f'https://github.com/{github.repo}/issues/'.lower()
-    numbers.update(issue['number'] for issue in pr['closingIssuesReferences'] if issue['url'].lower().startswith(prefix))
     issues = []
     for number in sorted(numbers):
         issue = github.api(f'issues/{number}', missing_ok=True)
@@ -150,12 +163,12 @@ def project_status(github, issues, target, *, project_name, apply):
     if not issues:
         raise ToolError('No issues to update')
     for issue in issues:
-        if issue['state'] != 'open' or not issue['assignees']:
-            raise ToolError(f'Issue #{issue["number"]} must be open and assigned')
+        if issue['state'] != 'open':
+            raise ToolError(f'Issue #{issue["number"]} must be open')
     if apply:
         # Classic OAuth tokens expose scopes here. Fine-grained tokens may not
         # advertise them, so let the Projects API check those credentials.
-        headers = gh('api', '--include', 'user').split('\n\n', 1)[0]
+        headers = gh('api', '--include', f'repos/{github.repo}').split('\n\n', 1)[0]
         scopes = re.search(r'^x-oauth-scopes:\s*(.*)$', headers, re.I | re.M)
         if scopes and scopes[1].strip() and 'project' not in {scope.strip() for scope in scopes[1].split(',')}:
             raise ToolError('GitHub CLI needs Projects write access (gh auth refresh --scopes project)')

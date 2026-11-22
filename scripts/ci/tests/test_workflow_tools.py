@@ -25,9 +25,9 @@ def issue(number, *, body='', state='open', assignee='drazafsky', labels=()):
 class GitHubToolTests(unittest.TestCase):
     def test_issue_lookup_excludes_cross_repo_links_code_and_prs(self):
         github = mock.Mock(repo=REPO)
-        pr = dict(body='Refs #20 and https://github.com/drazafsky/roundos/issues/18. '
-                       'Please see other/repo#1, `#5`, and #42.\n```\n#6\n```\n<!-- #7 -->',
-                  closingIssuesReferences=[{'url': f'https://github.com/{REPO}/issues/19', 'number': 19}],
+        pr = dict(body='Refs #20, #19 and https://github.com/drazafsky/roundos/issues/18. '
+                       'Please see other/repo#1, `#5`, and #42.\n````markdown\n```\n#6\n```\n````\n<!-- #7 -->\n``#8``',
+                  closingIssuesReferences=[{'url': f'https://github.com/{REPO}/issues/2', 'number': 2}],
                   assignees=[{'login': 'owner'}])
         objects = {18: issue(18, assignee='owner', state='closed'), 19: issue(19), 20: issue(20),
                    42: {'pull_request': {}}}
@@ -77,14 +77,14 @@ class GitHubToolTests(unittest.TestCase):
         self.assertEqual(github.repo_graphql.call_args.kwargs['cursor'], 'next')
 
     def test_missing_project_scope_prevents_even_the_add_mutation(self):
-        github = mock.Mock()
+        github = mock.Mock(repo=REPO)
         with mock.patch.object(tools, 'gh', return_value='HTTP/2 200\nX-Oauth-Scopes: repo, read:project\n\n{}'):
             with self.assertRaisesRegex(tools.ToolError, 'Projects write access'):
                 tools.project_status(github, [issue(45)], 'In Progress', project_name='RoundOS', apply=True)
         github.graphql.assert_not_called()
 
     def test_project_status_preview_and_unchanged_status_do_not_write(self):
-        github = mock.Mock()
+        github = mock.Mock(repo=REPO)
         project = {'id': 'project', 'title': 'RoundOS', 'field': {'id': 'status', 'options': [{'id': 'option', 'name': 'PR Review'}]}}
         state = {'name': 'In Progress'}
         items = {'nodes': [{'id': 'item', 'project': {'id': 'project'}, 'fieldValueByName': state}],
@@ -93,10 +93,11 @@ class GitHubToolTests(unittest.TestCase):
         github.repo_graphql.side_effect = [project_data, {'issue': {'projectItems': items}}] * 3
         github.graphql.return_value = {'updateProjectV2ItemFieldValue': {
             'projectV2Item': {'fieldValueByName': {'name': 'PR Review'}}}}
+        unassigned = dict(issue(45), assignees=[])
         with mock.patch.object(tools, 'gh', return_value='HTTP/2 200\nX-Oauth-Scopes: repo, project\n\n{}'), redirect_stdout(StringIO()):
-            tools.project_status(github, [issue(45)], 'PR Review', project_name='RoundOS', apply=False)
+            tools.project_status(github, [unassigned], 'PR Review', project_name='RoundOS', apply=False)
             github.graphql.assert_not_called()
-            tools.project_status(github, [issue(45)], 'PR Review', project_name='RoundOS', apply=True)
+            tools.project_status(github, [unassigned], 'PR Review', project_name='RoundOS', apply=True)
             github.graphql.assert_called_once()
             self.assertEqual(github.graphql.call_args.kwargs, dict(project='project', item='item', field='status', option='option'))
             state['name'] = 'PR Review'
@@ -120,7 +121,7 @@ class ParentPlanTests(unittest.TestCase):
         github = mock.Mock(repo=REPO)
         publisher = mock.Mock()
         publisher.trusted.return_value = True
-        items = {28: issue(28, body='Original'), 44: issue(44)}
+        items = {28: issue(28, body='Original'), 44: dict(issue(44), user={'login': 'co-maintainer'})}
         attached = False
         failed = False
 
@@ -153,6 +154,7 @@ class ParentPlanTests(unittest.TestCase):
             parent.prepare(github, publisher, 28, '0.6.0', **kwargs)
         creates = [call for call in github.api.call_args_list if call.args[0] == 'issues']
         self.assertEqual(len(creates), 1)
+        publisher.trusted.assert_any_call('co-maintainer')
         self.assertIn('Pi acceptance: #44', items[28]['body'])
         self.assertFalse(items[28]['labels'])
 

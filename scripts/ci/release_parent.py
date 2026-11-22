@@ -73,10 +73,12 @@ def ensure_descendant(github, parent, child):
     raise ToolError(f'Pi acceptance must be a native sub-issue below #{parent}')
 
 
-def find_acceptance(github, parent):
+def find_acceptance(github, publisher, parent):
     marker = f'<!-- roundos-release-acceptance:parent={parent} -->'
     matches = [entry for entry in github.pages('issues?state=all') if 'pull_request' not in entry
-               and marker in (entry.get('body') or '') and entry['user']['login'].lower() == ASSIGNEE]
+               and marker in (entry.get('body') or '').splitlines()
+               and any(person['login'].lower() == ASSIGNEE for person in entry['assignees'])
+               and publisher.trusted(entry['user']['login'])]
     if len(matches) > 1:
         raise ToolError(f'Multiple tracked acceptance issues for #{parent}; select one using --acceptance')
     return (matches[0] if matches else None), marker
@@ -109,7 +111,7 @@ def prepare(github, publisher, parent, version, *, acceptance, create_acceptance
         issue(github, acceptance)
         ensure_descendant(github, parent, acceptance)
     else:
-        found, marker = find_acceptance(github, parent)
+        found, marker = find_acceptance(github, publisher, parent)
         if found:
             acceptance = found['number']
             current = github.api(f'issues/{acceptance}/parent', missing_ok=True)

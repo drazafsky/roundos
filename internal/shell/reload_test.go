@@ -135,3 +135,24 @@ func TestReloadRemovingParentCancelsUnchangedChildInput(t *testing.T) {
 		t.Fatalf("orphaned child input survived navigation fallback: screen=%s picker=%s edit=%s", screen.ID, m.PickerID, m.EditingWidget)
 	}
 }
+
+func TestReloadRevealsRetainedFocusAfterReordering(t *testing.T) {
+	m := New()
+	v := ui.View{Screens: []ui.ScreenSpec{ui.Screen("root", "Root", "", "", ui.Button("a", "A", "a"), ui.Button("b", "B", "b"), ui.Button("c", "C", "c"), ui.Button("d", "D", "d"), ui.Button("e", "E", "e"))}}
+	m.SetView(wire.ClockID, v)
+	m.Select(Clock)
+	v.Screens[0].Widgets[0], v.Screens[0].Widgets[4] = v.Screens[0].Widgets[4], v.Screens[0].Widgets[0]
+	m.SetView(wire.ClockID, v)
+	visible := false
+	for _, row := range m.visibleWidgets() {
+		if row.Index == 4 {
+			visible = true
+		}
+	}
+	if !visible || m.AppStacks[Clock][0].FocusID != "a" {
+		t.Fatal("retained focus became an off-screen activation target")
+	}
+	if _, action := m.ActivateWidget(); action != "a" {
+		t.Fatal("stable focused action lost", action)
+	}
+}

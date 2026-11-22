@@ -36,7 +36,11 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 		if !ok {
 			continue
 		}
-		if w, _, ok := widgetByID(after, frames[i].FocusID); ok && circleui.Focusable(w) {
+		if w, nextIndex, ok := widgetByID(after, frames[i].FocusID); ok && circleui.Focusable(w) {
+			_, oldIndex, existed := widgetByID(before, frames[i].FocusID)
+			if !existed || oldIndex != nextIndex || (before.Hero == "") != (after.Hero == "") {
+				m.revealReloadFocus(&frames[i], after, nextIndex)
+			}
 			continue
 		}
 		_, at, hadFocus := widgetByID(before, frames[i].FocusID)
@@ -65,6 +69,9 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 			}
 		}
 		frames[i].FocusID = best
+		if _, index, ok := widgetByID(after, best); ok {
+			m.revealReloadFocus(&frames[i], after, index)
+		}
 	}
 	if page != m.Page {
 		return
@@ -104,6 +111,17 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 	if changed {
 		m.cancelReloadContact()
 	}
+}
+
+func (m *Model) revealReloadFocus(frame *NavFrame, screen wire.Screen, index int) {
+	_, _, step, height := circleui.RowMetrics(screen.Hero != "", m.Appearance.LargeTargets)
+	for _, row := range circleui.VisiblePixelAt(screen.Widgets, frame.ScrollPx, screen.Hero != "", m.Appearance.LargeTargets) {
+		if row.Index == index && row.Rect.Bottom-row.Rect.Top >= height {
+			return
+		}
+	}
+	frame.Scroll = circleui.ScrollTo(screen.Widgets, index, frame.Scroll, screen.Hero != "", m.Appearance.LargeTargets)
+	frame.ScrollPx = float64(frame.Scroll * step)
 }
 
 func sameInputTarget(a, b wire.Widget) bool {

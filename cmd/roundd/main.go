@@ -544,6 +544,11 @@ func main() {
 	}
 	for {
 		now := time.Now()
+		// Timer-driven navigation can also finish an editor or dialog.
+		// Drain pending results before waiting for the next input event.
+		flushText()
+		flushDialog()
+		flushWiFi()
 		var timer *time.Timer
 		var alarm <-chan time.Time
 		var next time.Duration

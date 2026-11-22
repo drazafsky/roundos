@@ -165,7 +165,7 @@ func TestGitHubRateLimitDeadlines(t *testing.T) {
 			})
 			_, err := g.Check(context.Background(), "0.5.1")
 			var limited *RateLimitError
-			if !errors.As(err, &limited) || !limited.RetryAt.Equal(now.Add(tc.wait)) {
+			if !errors.As(err, &limited) || !limited.RetryAt.Equal(now.Add(tc.wait)) || !limited.ObservedAt.Equal(now) {
 				t.Fatalf("rate limit: %v", err)
 			}
 		})

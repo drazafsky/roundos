@@ -76,6 +76,10 @@ func headingID(screen, group string) string {
 // buildView lowers fully resolved RUI into the existing v7 shell view model.
 // All geometry, colors, focus, navigation and hit testing stay in the shell.
 func buildView(f *bundle.File, states stateSnapshot, dialogID string) (ui.View, error) {
+	return buildViewWithVisibility(f, states, dialogID, false)
+}
+
+func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID string, includeHidden bool) (ui.View, error) {
 	v := ui.View{Title: strings.ToUpper(f.Document.Application.ID)}
 	for _, screen := range f.Document.Screens {
 		title, err := states.text(screen.Title, 80)
@@ -102,7 +106,7 @@ func buildView(f *bundle.File, states stateSnapshot, dialogID string) (ui.View, 
 				sc.Widgets = append(sc.Widgets, ui.Widget{ID: headingID(screen.ID, group.ID), Kind: "label", Label: t})
 			}
 			for _, w := range group.Widgets {
-				if w.VisibleWhen != nil {
+				if w.VisibleWhen != nil && !includeHidden {
 					show, e := states.boolean(*w.VisibleWhen)
 					if e != nil {
 						return v, e

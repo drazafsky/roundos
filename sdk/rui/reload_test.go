@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strings"
@@ -138,6 +139,66 @@ func TestReplacementValidatesHiddenWidgetsAndInactiveDialogs(t *testing.T) {
 			}
 			if r.file != old || pub.count() != 1 {
 				t.Fatal("failed hidden validation changed last-good state")
+			}
+		})
+	}
+}
+
+func TestReplacementChecksFutureSnapshotFrameBudgets(t *testing.T) {
+	for _, kind := range []string{"hidden-widgets", "inactive-dialog"} {
+		t.Run(kind, func(t *testing.T) {
+			_, pub, r := loadDemo(t)
+			count, enabled, title := 5, false, strings.Repeat("x", 160)
+			registerDemo(t, r, &count, &enabled, &title)
+			r.Dispatch(app.Event{Type: "visibility", Visible: true})
+			if err := r.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			var source strings.Builder
+			source.WriteString("schema: roundos.rui/v1\napplication:\n  id: org.example.rui.demo\nscreens:\n")
+			for screen := 0; screen < 8; screen++ {
+				fmt.Fprintf(&source, "  - id: screen%d\n    title: Test\n    layout: list\n    groups:\n      - id: items\n        widgets:\n", screen)
+				for widget := 0; widget < 64; widget++ {
+					fmt.Fprintf(&source, "          - id: item%d\n            type: label\n            label: { bind: demo.subtitle }\n", widget)
+					if kind == "hidden-widgets" {
+						source.WriteString("            visibleWhen: { bind: demo.enabled }\n")
+					}
+				}
+			}
+			source.WriteString("dialogs:\n  - id: test.confirm\n    title: Test\n    body: { bind: demo.subtitle }\n    confirmLabel: OK\n    cancelLabel: CANCEL\n    onConfirm: demo.confirmReset\n    onCancel: demo.cancelReset\n")
+			data, file, err := compile.Compile([]byte(source.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "inactive-dialog" {
+				// Fit the ordinary snapshot just below the frame boundary, where
+				// opening the otherwise valid dialog would exceed that boundary.
+				for {
+					if _, err := buildView(file, stateSnapshot(r.bindings), ""); err == nil {
+						break
+					}
+					screens := file.Document.Screens
+					widgets := screens[len(screens)-1].Groups[0].Widgets
+					if len(widgets) == 1 {
+						file.Document.Screens = screens[:len(screens)-1]
+					} else {
+						screens[len(screens)-1].Groups[0].Widgets = widgets[:len(widgets)-1]
+					}
+				}
+				if _, err := buildView(file, stateSnapshot(r.bindings), "test.confirm"); err == nil {
+					t.Fatal("fixture dialog did not exceed frame budget")
+				}
+				data, _, err = compile.FromDocument(&file.Document, []byte(source.String()))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := r.file
+			if err := r.Replace(data); err == nil || !strings.Contains(err.Error(), "IPC frame") {
+				t.Fatalf("future oversized snapshot accepted or unexpected error: %v", err)
+			}
+			if r.file != old || pub.count() != 1 {
+				t.Fatal("frame-budget failure replaced the last-good layout")
 			}
 		})
 	}

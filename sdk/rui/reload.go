@@ -162,5 +162,16 @@ func stageReload(r *Runtime, bindings map[string]binding, dialog string) (view u
 			return view, err
 		}
 	}
+	// A hidden control or inactive dialog can become visible without another
+	// layout replacement. Verify that every such snapshot fits the IPC frame
+	// before discarding the last-good layout, using the same frozen values.
+	if _, err := buildViewWithVisibility(r.file, states, "", true); err != nil {
+		return view, fmt.Errorf("replacement all-visible snapshot: %w", err)
+	}
+	for _, item := range r.file.Document.Dialogs {
+		if _, err := buildViewWithVisibility(r.file, states, item.ID, true); err != nil {
+			return view, fmt.Errorf("replacement dialog %q snapshot: %w", item.ID, err)
+		}
+	}
 	return buildView(r.file, states, dialog)
 }

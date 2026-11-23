@@ -38,6 +38,7 @@ type installRequest struct {
 }
 
 type installTransaction struct {
+	InstallStage  string                `json:"install_stage,omitempty"`
 	Status        InstallStatus         `json:"status"`
 	OldCurrent    string                `json:"old_current"`
 	OldPrevious   string                `json:"old_previous"`
@@ -85,7 +86,7 @@ func readManagedUnit(file string) ([]byte, error) {
 
 type installerCommands interface {
 	Run(context.Context, string, ...string) ([]byte, error)
-	Install(context.Context, string) error
+	Install(context.Context, string, string) error
 }
 
 type localInstallerCommands struct{}
@@ -102,8 +103,7 @@ func (o *installOutput) Write(p []byte) (int, error) {
 func boundedInstallCommand(command *exec.Cmd) ([]byte, error) {
 	var out installOutput
 	command.Stdout, command.Stderr = &out, &out
-	command.WaitDelay = time.Second
-	err := command.Run()
+	err := runUpdateCommand(command)
 	return out.buffer.Bytes(), err
 }
 
@@ -117,10 +117,10 @@ func (localInstallerCommands) Run(ctx context.Context, program string, args ...s
 	return output, nil
 }
 
-func (localInstallerCommands) Install(ctx context.Context, root string) error {
+func (localInstallerCommands) Install(ctx context.Context, root, stage string) error {
 	command := exec.CommandContext(ctx, "/bin/sh", filepath.Join(root, "scripts/install-release.sh"))
 	command.Dir = root
-	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "ROUNDOS_UPDATE_TRANSACTION=1"}
+	command.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "ROUNDOS_UPDATE_TRANSACTION=1", "ROUNDOS_UPDATE_STAGE=" + stage}
 	output, err := boundedInstallCommand(command)
 	if err != nil {
 		return fmt.Errorf("managed installer: %w: %s", err, strings.TrimSpace(string(output)))
@@ -353,7 +353,7 @@ func (i *Installer) RunPending(ctx context.Context) error {
 		return err
 	}
 	if transaction.Status.Phase != "queued" {
-		if transaction.Status.InProgress() || transaction.Status.Phase == "recovery_required" {
+		if transaction.Status.InProgress() {
 			return i.recoverLocked(ctx, &transaction, true)
 		}
 		return nil // a failed/prepared request is never installed again implicitly
@@ -421,13 +421,17 @@ func (i *Installer) RunPending(ctx context.Context) error {
 		transaction.OldUnits[name] = unitBackup{Data: data, Digest: unitDigest(data)}
 	}
 	transaction.Stage = p.stage
+	transaction.InstallStage = filepath.Join(i.root, "releases", ".install-update-"+transaction.Status.ID)
+	if _, err := os.Lstat(transaction.InstallStage); !errors.Is(err, os.ErrNotExist) {
+		return i.fail(&transaction, errors.New("installer staging directory already exists"))
+	}
 	if err := i.phase(&transaction, "switching", "Installing the update; RoundOS will restart"); err != nil {
 		return err
 	}
 	if _, err := i.commands.Run(ctx, "/usr/bin/systemctl", "stop", "roundos.service"); err != nil {
 		return i.rollback(ctx, &transaction, err)
 	}
-	if err := i.commands.Install(ctx, p.Root); err != nil {
+	if err := i.commands.Install(ctx, p.Root, transaction.InstallStage); err != nil {
 		return i.rollback(ctx, &transaction, err)
 	}
 	// The recovery controller must never point at data that exists only in the
@@ -493,6 +497,9 @@ func (i *Installer) startReady(ctx context.Context) error {
 
 func (i *Installer) rollback(ctx context.Context, transaction *installTransaction, cause error) error {
 	transaction.Detail = cause.Error()
+	if errors.Is(cause, errUpdateChildrenActive) {
+		return errors.Join(cause, i.phase(transaction, "recovery_required", "Update processes need attention; inspect the helper over SSH"))
+	}
 	// An expired download/install context must not prevent restoring the old
 	// shell. Recovery has its own bounded window within the helper unit timeout.
 	recovery, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -656,6 +663,9 @@ func (i *Installer) recoverLocked(ctx context.Context, transaction *installTrans
 		if err := i.clearInterruptedLinks(transaction); err != nil {
 			return err
 		}
+		if err := i.clearInstallerStage(transaction); err != nil {
+			return err
+		}
 		return syncStateDirectory(filepath.Join(i.root, "releases"))
 	}
 	if err := restore(); err != nil {
@@ -670,6 +680,28 @@ func (i *Installer) recoverLocked(ctx context.Context, transaction *installTrans
 		return nil
 	}
 	return err
+}
+
+func (i *Installer) clearInstallerStage(transaction *installTransaction) error {
+	stage := transaction.InstallStage
+	if stage == "" {
+		return nil
+	}
+	if stage != filepath.Join(i.root, "releases", ".install-update-"+transaction.Status.ID) {
+		return errors.New("untrusted installer staging recovery path")
+	}
+	if _, err := os.Lstat(stage); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := trustedInstalledPath(stage, true); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(stage); err != nil {
+		return err
+	}
+	return syncStateDirectory(filepath.Dir(stage))
 }
 
 func (i *Installer) effectiveManagedUnit(ctx context.Context, name string) error {

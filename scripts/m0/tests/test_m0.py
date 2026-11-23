@@ -223,6 +223,17 @@ p.write_text(json.dumps(s));sys.exit(rc)
         self.assertTrue(states['lightdm.service']['enabled'])
         self.assertFalse((self.base/'desktop-stamp').exists())
 
+    def test_lifecycle_commands_share_the_update_transaction_lock(self):
+        import fcntl
+        state=self.base/'shell-data';state.mkdir()
+        before=self.state.read_bytes()
+        with (state/'update-install.lock').open('w') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            for action in ('activate','disable','rollback'):
+                result=self.call(action,success=False)
+                self.assertIn('Another update installer is running',result.stderr)
+                self.assertEqual(self.state.read_bytes(),before)
+
     def test_rollback_switches_managed_symlinks(self):
         (self.root/'previous').symlink_to(self.root/'releases'/'0.4.9')
         self.call('activate')

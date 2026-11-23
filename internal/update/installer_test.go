@@ -11,6 +11,7 @@ import (
 )
 
 type fakeInstallerCommands struct {
+	crashDuringCopy    bool
 	limitOnReplacement bool
 	rateLimited        bool
 	afterInstall       func()
@@ -107,8 +108,13 @@ func writeInstalledFixture(t *testing.T, dir, version string) {
 	}
 }
 
-func (c *fakeInstallerCommands) Install(ctx context.Context, root string) error {
+func (c *fakeInstallerCommands) Install(ctx context.Context, root, stage string) error {
 	c.log = append(c.log, "install")
+	if c.crashDuringCopy {
+		os.Mkdir(stage, 0700)
+		os.WriteFile(filepath.Join(stage, "partial"), []byte("partial"), 0600)
+		panic("interrupted installer copy")
+	}
 	newRelease := filepath.Join(c.i.root, "releases", "0.6.0")
 	writeInstalledFixture(c.t, newRelease, "0.6.0")
 	if err := atomicInstallLink(c.i.root, "previous", c.old); err != nil {
@@ -594,5 +600,49 @@ func TestInstallerBootAllowsUnchangedReleaseWhenInterruptedOutcomeCannotPersist(
 			}
 			assertManagedLink(t, i, "current", c.old)
 		})
+	}
+}
+
+func TestInstallerRecoveryRemovesItsInterruptedReleaseCopy(t *testing.T) {
+	i, c, r := installerFixture(t)
+	if _, err := i.Request(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	c.crashDuringCopy = true
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("copy interruption not injected")
+			}
+		}()
+		i.RunPending(context.Background())
+	}()
+	var transaction installTransaction
+	if err := readInstallJSON(i.transactionFile(), &transaction); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(transaction.InstallStage, "partial")); err != nil {
+		t.Fatal("partial copy fixture missing")
+	}
+	if err := i.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(transaction.InstallStage); !os.IsNotExist(err) {
+		t.Fatal("interrupted release copy consumed storage after recovery")
+	}
+	assertManagedLink(t, i, "current", c.old)
+}
+
+func TestInstallerDoesNotAutomaticallyReplayRecoveryRequiredTransaction(t *testing.T) {
+	i, c, r := installerFixture(t)
+	i.Request(context.Background(), r)
+	var transaction installTransaction
+	readInstallJSON(i.transactionFile(), &transaction)
+	if err := i.phase(&transaction, "recovery_required", "SSH required"); err != nil {
+		t.Fatal(err)
+	}
+	before := len(c.log)
+	if err := i.RunPending(context.Background()); err != nil || len(c.log) != before {
+		t.Fatal("helper restart attempted an unsafe automatic recovery")
 	}
 }

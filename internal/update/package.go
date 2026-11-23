@@ -475,7 +475,7 @@ func packageProbe(ctx context.Context, binary, flag string) (string, error) {
 	var out probeOutput
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
-	err := cmd.Run()
+	err := runUpdateCommand(cmd)
 	return out.buffer.String(), err
 }
 

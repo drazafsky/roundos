@@ -2,6 +2,7 @@ package update
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -84,7 +85,15 @@ func (i *Installer) lock() (*os.File, error) {
 		return nil, err
 	}
 	file := filepath.Join(i.stateDir, "update-install.lock")
-	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0600)
+	// flock works on a read-only descriptor. Existing recovery records must
+	// remain usable when /var becomes read-only after an interrupted update.
+	f, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		f, err = os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0600)
+		if errors.Is(err, os.ErrExist) {
+			f, err = os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -193,4 +202,37 @@ func replaceUnit(file string, data []byte) error {
 		return err
 	}
 	return syncStateDirectory(filepath.Dir(file))
+}
+
+func syncInstalledRelease(ctx context.Context, root string) error {
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := trustedInstalledPath(path, entry.IsDir()); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			dirs = append(dirs, path)
+			return nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		return errors.Join(file.Sync(), file.Close())
+	})
+	if err != nil {
+		return err
+	}
+	for n := len(dirs) - 1; n >= 0; n-- {
+		if err := syncStateDirectory(dirs[n]); err != nil {
+			return err
+		}
+	}
+	return syncStateDirectory(filepath.Dir(root))
 }

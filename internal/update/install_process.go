@@ -55,6 +55,10 @@ func stopUpdateGroup(group int) error {
 }
 
 func updateGroupActive(group int) (bool, error) {
+	return updateGroupActiveUsing(group, os.ReadFile)
+}
+
+func updateGroupActiveUsing(group int, readStat func(string) ([]byte, error)) (bool, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return false, err
@@ -63,8 +67,10 @@ func updateGroupActive(group int) (bool, error) {
 		if _, err := strconv.Atoi(entry.Name()); err != nil {
 			continue
 		}
-		data, err := os.ReadFile("/proc/" + entry.Name() + "/stat")
-		if errors.Is(err, os.ErrNotExist) {
+		data, err := readStat("/proc/" + entry.Name() + "/stat")
+		// An exiting process can disappear after enumeration or after its
+		// stat file is opened. Neither ENOENT nor ESRCH indicates a live writer.
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 			continue
 		}
 		if err != nil {

@@ -2,9 +2,11 @@ package update
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -44,5 +46,26 @@ func TestUpdateCommandCancellationStopsDescendantsBeforeReturning(t *testing.T) 
 	time.Sleep(250 * time.Millisecond)
 	if _, err := os.Stat(late); !os.IsNotExist(err) {
 		t.Fatal("installer descendant wrote after command cancellation returned")
+	}
+}
+
+func TestUpdateGroupScanToleratesProcessExitRaces(t *testing.T) {
+	for _, exited := range []error{os.ErrNotExist, syscall.ESRCH} {
+		active, err := updateGroupActiveUsing(4242, func(string) ([]byte, error) {
+			return nil, &os.PathError{Op: "read", Path: "/proc/exited/stat", Err: exited}
+		})
+		if err != nil || active {
+			t.Fatalf("exited process blocked recovery: active=%t, %v", active, err)
+		}
+	}
+	active, err := updateGroupActiveUsing(4242, func(string) ([]byte, error) {
+		return []byte("123 (installer child) S 1 4242 0"), nil
+	})
+	if err != nil || !active {
+		t.Fatalf("live installer child was missed: active=%t, %v", active, err)
+	}
+	_, err = updateGroupActiveUsing(4242, func(string) ([]byte, error) { return nil, syscall.EACCES })
+	if !errors.Is(err, syscall.EACCES) {
+		t.Fatal("unverifiable process state was treated as safe")
 	}
 }

@@ -164,7 +164,7 @@ class GateTests(unittest.TestCase):
             with self.assertRaises(ValueError): collect.main()
             run.assert_not_called()
 
-    def test_collector_output_preserves_three_independent_run_identities(self):
+    def collect_fixture(self, failure=None):
         import collect
         from unittest import mock
         base = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -181,6 +181,8 @@ class GateTests(unittest.TestCase):
         def execute(args, **kwargs):
             nonlocal run_number
             if args[0] == 'sudo': return None
+            if run_number == 1 and failure == 'sampling':
+                raise collect.subprocess.CalledProcessError(1, args)
             directory = Path(args[args.index('--output') + 1])
             directory.mkdir()
             start = base + timedelta(seconds=run_number * 100 + 1)
@@ -192,17 +194,42 @@ class GateTests(unittest.TestCase):
             (directory / 'session.json').write_text(json.dumps(session))
             run_number += 1
         def metrics(device, start, end):
+            if device['service_pid'] == 124 and failure == 'latency':
+                raise collect.subprocess.CalledProcessError(1, ['journalctl'])
             return [{'input-to-present-p95': '10ms', 'input_samples': 7, 'run_scoped': True,
                      'service_pid': device['service_pid'], 'boot_id': device['boot_id'], 'recorded_utc': end}]
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / 'new-session'
             args = ['collect.py', '--expect-version', '0.5.0', '--scenario', 'gallery_flick', '--output', str(output), '--restart-for-latency']
-            with mock.patch.object(sys, 'argv', args), mock.patch.object(collect, 'identity', side_effect=identities), mock.patch.object(collect.time, 'clock_gettime', side_effect=[99, 199, 299]), mock.patch('builtins.input', return_value=''), mock.patch('builtins.print'), mock.patch.object(collect.subprocess, 'run', side_effect=execute) as commands, mock.patch.object(collect.latency, 'collect', side_effect=metrics):
-                self.assertEqual(collect.main(), 0)
+            with mock.patch.object(sys, 'argv', args), mock.patch.object(collect, 'identity', side_effect=identities), mock.patch.object(collect.time, 'clock_gettime', side_effect=[99, 199, 299]), mock.patch('builtins.input', side_effect=['', KeyboardInterrupt] if failure == 'interrupt' else ['', '', '']), mock.patch('builtins.print'), mock.patch.object(collect.subprocess, 'run', side_effect=execute) as commands, mock.patch.object(collect.latency, 'collect', side_effect=metrics):
+                if failure:
+                    with self.assertRaises(SystemExit) as error: collect.main()
+                    self.assertEqual(error.exception.code, 1)
+                else:
+                    self.assertEqual(collect.main(), 0)
             result = json.loads((output / 'session-bound.json').read_text())
-            self.assertIsNotNone(gate.session_runs(result, 'gallery_flick', identities[1]))
-            self.assertEqual([value['m7_identity']['service_pid'] for value in result['runs']], [123, 124, 125])
-            self.assertEqual(sum(call.args[0][0] == 'sudo' for call in commands.call_args_list), 6)
+            self.assertEqual((output / 'session-bound.json').stat().st_mode & 0o777, 0o600)
+            return result, identities[1], commands.call_args_list
+
+    def test_collector_output_preserves_three_independent_run_identities(self):
+        result, first, calls = self.collect_fixture()
+        self.assertEqual(len(gate.session_runs(result, 'gallery_flick', first)), 3)
+        self.assertEqual(result['status'], 'COLLECTED')
+        self.assertEqual([value['m7_identity']['service_pid'] for value in result['runs']], [123, 124, 125])
+        self.assertEqual(sum(call.args[0][0] == 'sudo' for call in calls), 6)
+
+    def test_interrupted_collection_keeps_completed_comparison_ready_runs(self):
+        for failure in ('sampling', 'latency', 'interrupt'):
+            with self.subTest(failure=failure):
+                result, first, calls = self.collect_fixture(failure)
+                self.assertEqual(result['status'], 'INCOMPLETE')
+                self.assertFalse(result['accepted_for_m0'])
+                self.assertTrue(result['runs'][0]['renderer_metrics'])
+                self.assertIn(1, gate.session_runs(result, 'gallery_flick', first))
+                if failure == 'latency':
+                    self.assertEqual(len(result['runs']), 2)
+                    self.assertEqual(result['runs'][1]['renderer_metrics'], [])
+                    self.assertEqual(result['runs'][1]['sample']['shell_rss_valid_records'], 60)
 
 
 class BindingTests(unittest.TestCase):

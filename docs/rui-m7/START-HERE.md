@@ -88,9 +88,12 @@ allowlisted timing values. CPU and RSS use the original sampler's definitions.
 
 The wrapper uses sudo for the explicitly requested service restarts and
 read-only identity inspection. Enter any sudo
-password in your own SSH terminal. Outputs start private (0600/0700), refuse
-existing paths, and never record process arguments, SSIDs, editor values or
-credentials. Before/after identity must match the actual root-owned running
+password in your own SSH terminal. Outputs start private (0600/0700). Existing
+output directories and raw files are refused. The scenario report is checkpointed
+atomically after each verified run and latency read, preserving completed
+measurements if later collection fails or is interrupted. Partial reports remain
+INCOMPLETE; known failures still appear in comparisons. Process arguments,
+SSIDs, editor values and credentials are never recorded. Before/after identity must match the actual root-owned running
 binary, Timer hash, Pi identity, boot and PID. Raw process samples are checked
 against that PID and hashed; CPU/RSS summaries are recalculated and require at least 45 finite,
 nonnegative CPU readings and 45 positive RSS readings per run. Incomplete

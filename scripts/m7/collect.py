@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 
 from bind_session import bind
@@ -30,6 +31,21 @@ def identity(version):
     return value
 
 
+def checkpoint(path, value):
+    """Replace only the report in this invocation's new private directory."""
+    fd, name = tempfile.mkstemp(prefix='.scenario-', dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as output:
+            json.dump(value, output, indent=2, allow_nan=False)
+            output.write('\n')
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expect-version', required=True)
@@ -44,6 +60,10 @@ def main():
         runs = []
         first_identity = None
         expected = identity(args.expect_version)
+        session = {'scenario': args.scenario, 'accepted_for_m0': False, 'reference_pi_managed': True,
+                   'status': 'INCOMPLETE', 'target_seconds': 60, 'target_repeats': 3,
+                   'interval_seconds': 1, 'runs': runs}
+        checkpoint(args.output / 'session-bound.json', session)
         for number in (1, 2, 3):
             print(f'Run {number}/3: {args.scenario}. Prepare the workload/settings first.')
             input('Press Enter to reset the start counter and restart roundos.service, then perform this workload: ')
@@ -63,7 +83,9 @@ def main():
                 raise ValueError('Managed shell did not start inside this run window')
             if first_identity and any(before[key] != first_identity[key] for key in RELEASE_KEYS):
                 raise ValueError('Managed release changed between runs')
-            first_identity = first_identity or before
+            if first_identity is None:
+                first_identity = before
+                write_new(args.output / 'before.json', before)
             directory = args.output / f'run-{number:02d}'
             directory.mkdir(mode=0o700)
             write_new(directory / 'before.json', before)
@@ -77,17 +99,17 @@ def main():
             run['run'] = number
             run['m7_identity'] = bound['m7_identity']
             run['m7_identity']['window_start_boottime_seconds'] = armed
-            run['renderer_metrics'] = latency.collect(before, run['start_utc'], run['end_utc'])
-            if not run['renderer_metrics']:
-                raise ValueError('No latency summary from the new managed process')
+            run['renderer_metrics'] = []
             write_new(directory / 'session-bound.json', bound)
             runs.append(run)
-        session = {'scenario': args.scenario, 'accepted_for_m0': True, 'reference_pi_managed': True,
-                   'status': 'COLLECTED', 'target_seconds': 60, 'target_repeats': 3,
-                   'interval_seconds': 1, 'runs': runs}
-        write_new(args.output / 'before.json', first_identity)
-        write_new(args.output / 'session-bound.json', session)
-    except (OSError, ValueError, KeyError, TypeError, EOFError, subprocess.SubprocessError) as error:
+            checkpoint(args.output / 'session-bound.json', session)
+            run['renderer_metrics'] = latency.collect(before, run['start_utc'], run['end_utc'])
+            checkpoint(args.output / 'session-bound.json', session)
+            if not run['renderer_metrics']:
+                raise ValueError('No latency summary from the new managed process')
+        session.update(accepted_for_m0=True, status='COLLECTED')
+        checkpoint(args.output / 'session-bound.json', session)
+    except (OSError, ValueError, KeyError, TypeError, EOFError, KeyboardInterrupt, subprocess.SubprocessError) as error:
         parser.exit(1, f'M7 collection incomplete: {type(error).__name__}; existing evidence retained.\n')
     print('M7 evidence:', args.output / 'session-bound.json')
     return 0

@@ -30,7 +30,9 @@ func copyUpdateRelease(r *update.Release) *update.Release {
 }
 
 func (m *Model) observeUpdateResult(status update.Status) {
-	if status.Busy || status.Sequence <= m.Updates.SeenSequence {
+	// Busy describes the next check; Result/Manual/Sequence still identify
+	// the last completed one, even when its idle snapshot was coalesced.
+	if status.Sequence <= m.Updates.SeenSequence {
 		return
 	}
 	m.Updates.SeenSequence = status.Sequence

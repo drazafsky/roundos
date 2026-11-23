@@ -177,6 +177,30 @@ func TestDefinitiveNoUpdateClearsDeferredNotice(t *testing.T) {
 	}
 }
 
+func TestBusySnapshotRetainsUnseenCompletedReleaseResult(t *testing.T) {
+	m := New()
+	// A manual discovery may be retained in a newer busy snapshot after
+	// the UI misses the completion snapshot. Manual can offer ignored releases.
+	status := availableStatus(1, "0.6.0", "Manual notes", true, "0.6.0")
+	status.Busy = true
+	m.SetUpdateStatus(status)
+	if !m.MaybePromptUpdate() || m.Updates.Notice.Notes != "Manual notes" {
+		t.Fatal("coalesced busy snapshot lost completed manual discovery")
+	}
+	m.DismissUpdate()
+	m.SetUpdateStatus(status)
+	if m.MaybePromptUpdate() {
+		t.Fatal("same completed sequence was presented twice")
+	}
+	m.OpenEditor()
+	m.SetUpdateStatus(availableStatus(2, "0.7.0", "", false, ""))
+	m.SetUpdateStatus(update.Status{Sequence: 3, Busy: true, Result: update.CheckResult{Status: update.UpToDate}})
+	m.Select(Home)
+	if m.MaybePromptUpdate() || m.Updates.PendingRelease != nil {
+		t.Fatal("coalesced up-to-date result retained a stale deferred notice")
+	}
+}
+
 func TestOldIgnoreAcknowledgementDoesNotDismissNewRelease(t *testing.T) {
 	m := New()
 	m.SetUpdateStatus(availableStatus(1, "0.6.0", "", false, ""))

@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,9 +31,10 @@ const (
 )
 
 type Asset struct {
-	Name string `json:"name"`
-	URL  string `json:"browser_download_url"`
-	Size int64  `json:"size"`
+	Name   string `json:"name"`
+	URL    string `json:"browser_download_url"`
+	Size   int64  `json:"size"`
+	Digest string `json:"digest"`
 }
 
 type Release struct {
@@ -159,7 +161,7 @@ func (g *GitHub) Check(ctx context.Context, installed string) (CheckResult, erro
 		if !required {
 			continue
 		}
-		if seen || a.Size <= 0 || !validAssetURL(a.URL, raw.Tag, a.Name) {
+		if seen || a.Size <= 0 || !validAssetURL(a.URL, raw.Tag, a.Name) || !validAssetDigest(a.Digest) {
 			return CheckResult{}, ErrIncompatibleRelease
 		}
 		needed[a.Name] = true
@@ -171,6 +173,14 @@ func (g *GitHub) Check(ctx context.Context, installed string) (CheckResult, erro
 		}
 	}
 	return CheckResult{Status: Available, Release: &Release{ID: raw.ID, Version: v, Tag: raw.Tag, Name: raw.Name, Notes: raw.Notes, Assets: assets}}, nil
+}
+
+func validAssetDigest(digest string) bool {
+	if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
+	return err == nil && digest == strings.ToLower(digest)
 }
 
 func validAssetURL(raw, tag, name string) bool {

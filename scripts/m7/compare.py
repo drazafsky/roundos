@@ -72,40 +72,68 @@ def valid_identity(identity, baseline):
 
 
 def session_runs(session, scenario, identity):
-    if (session.get('scenario') != scenario or session.get('accepted_for_m0') is not True
-            or session.get('reference_pi_managed') is not True or session.get('status') != 'COLLECTED'
+    """Index independently verified runs; incomplete peers cannot hide failures."""
+    if (session.get('scenario') != scenario or session.get('reference_pi_managed') is not True
             or session.get('target_seconds') != 60 or session.get('target_repeats') != 3
             or not number(session.get('interval_seconds')) or not .2 <= session['interval_seconds'] <= 30):
-        return None
-    runs = session.get('runs', [])
-    if len(runs) != 3 or [run.get('run') for run in runs] != [1, 2, 3]:
-        return None
-    for run in runs:
+        return {}
+    indexed = {}
+    duplicates = set()
+    seen = set()
+    for run in session.get('runs', []):
+        ordinal = run.get('run')
+        if type(ordinal) is not int or ordinal not in (1, 2, 3):
+            continue
+        if ordinal in seen:
+            duplicates.add(ordinal)
+        seen.add(ordinal)
         binding = run.get('m7_identity', {})
-        if (binding.get('verified') is not True or any(binding.get(key) != identity.get(key) for key in RELEASE_KEYS)
-                or not number(binding.get('service_start_boottime_seconds'))
+        if (run.get('complete') is not True or binding.get('verified') is not True
+                or any(binding.get(key) != identity.get(key) for key in RELEASE_KEYS)
+                or not number(binding.get('service_start_boottime_seconds')) or binding['service_start_boottime_seconds'] <= 0
                 or not number(binding.get('window_start_boottime_seconds'))
                 or binding['service_start_boottime_seconds'] < binding['window_start_boottime_seconds']
                 or type(binding.get('service_pid')) is not int or binding['service_pid'] <= 0):
-            return None
+            continue
         hashes = binding.get('raw_sha256', {})
         if set(hashes) != {'run-01.jsonl'} or not all(hex_id(value, 64) for value in hashes.values()):
-            return None
-        sample = run.get('sample', {})
-        if (run.get('complete') is not True or sample.get('records', 0) < 45
-                or not number(sample.get('shell_cpu_percent_mean')) or not number(sample.get('shell_rss_kib_peak'))
-                or sample['shell_rss_kib_peak'] <= 0 or sample.get('shell_cpu_valid_records', 0) < 45
-                or sample.get('shell_rss_valid_records', 0) < 45):
-            return None
-        timings = [m0.ms(item.get('input-to-present-p95')) for item in run.get('renderer_metrics', [])]
-        if not timings or any(not number(value) or scenario != 'idle' and value <= 0 for value in timings):
-            return None
-        if any(item.get('run_scoped') is not True or item.get('service_pid') != binding['service_pid']
-               or item.get('boot_id') != binding.get('boot_id')
-               or type(item.get('input_samples')) is not int or item['input_samples'] < (0 if scenario == 'idle' else 1)
-               for item in run.get('renderer_metrics', [])):
-            return None
-    return runs
+            continue
+        indexed[ordinal] = run
+    return {key: value for key, value in indexed.items() if key not in duplicates}
+
+
+def counter(run, field, count):
+    sample = run.get('sample', {})
+    value = sample.get(field)
+    records, valid = sample.get('records'), sample.get(count)
+    if (type(records) is not int or type(valid) is not int or not 45 <= valid <= records or not number(value)
+            or field == 'shell_rss_kib_peak' and value <= 0):
+        return None
+    return value
+
+
+def latency_value(run, scenario):
+    binding = run.get('m7_identity', {})
+    metrics = run.get('renderer_metrics', [])
+    values = [m0.ms(item.get('input-to-present-p95')) for item in metrics]
+    if not values or any(not number(value) or scenario != 'idle' and value <= 0 for value in values):
+        return None
+    if any(item.get('run_scoped') is not True or item.get('service_pid') != binding.get('service_pid')
+           or item.get('boot_id') != binding.get('boot_id')
+           or type(item.get('input_samples')) is not int or item['input_samples'] < (0 if scenario == 'idle' else 1)
+           for item in metrics):
+        return None
+    return max(values)
+
+
+def budget(before, after, factor=1, allowance=0, *, measure=True):
+    if before is None or after is None:
+        return 'PENDING'
+    return 'PASS' if not measure or after <= before * factor + allowance else 'FAIL'
+
+
+def aggregate(statuses):
+    return 'FAIL' if 'FAIL' in statuses else 'PASS' if statuses and all(value == 'PASS' for value in statuses) else 'PENDING'
 
 
 def compare(baseline_identity, candidate_identity, baseline, candidate, observations, protocol):
@@ -115,42 +143,42 @@ def compare(baseline_identity, candidate_identity, baseline, candidate, observat
               'candidate_commit': candidate_identity.get('commit'),
               'identity': 'PASS' if identity_ok else 'PENDING', 'scenarios': {}, 'observations': {}}
     for scenario in SCENARIOS:
-        old, new = session_runs(baseline.get(scenario, {}), scenario, baseline_identity), session_runs(candidate.get(scenario, {}), scenario, candidate_identity)
-        if old is None or new is None or not identity_ok:
-            result['scenarios'][scenario] = {'status': 'PENDING'}
-            continue
-        if baseline[scenario].get('interval_seconds') != candidate[scenario].get('interval_seconds'):
+        old_session, new_session = baseline.get(scenario, {}), candidate.get(scenario, {})
+        old, new = session_runs(old_session, scenario, baseline_identity), session_runs(new_session, scenario, candidate_identity)
+        if not identity_ok or old_session.get('interval_seconds') != new_session.get('interval_seconds'):
             result['scenarios'][scenario] = {'status': 'PENDING'}
             continue
         comparisons = []
-        for before, after in zip(old, new):
-            # Compare matched run summaries; retain absolute values for review.
-            a = max(m0.ms(item['input-to-present-p95']) for item in before['renderer_metrics'])
-            b = max(m0.ms(item['input-to-present-p95']) for item in after['renderer_metrics'])
-            old_sample, new_sample = before['sample'], after['sample']
-            latency = scenario == 'idle' or b <= a * 1.1
-            cpu = scenario != 'idle' or new_sample['shell_cpu_percent_mean'] <= old_sample['shell_cpu_percent_mean'] * 1.1
-            rss = new_sample['shell_rss_kib_peak'] <= old_sample['shell_rss_kib_peak'] + 8192
-            comparisons.append({'run': before['run'], 'baseline_input_p95_ms': a, 'candidate_input_p95_ms': b,
-                                'baseline_cpu_percent': old_sample['shell_cpu_percent_mean'],
-                                'candidate_cpu_percent': new_sample['shell_cpu_percent_mean'],
-                                'baseline_rss_kib': old_sample['shell_rss_kib_peak'], 'candidate_rss_kib': new_sample['shell_rss_kib_peak'],
-                                'status': 'PASS' if latency and cpu and rss else 'FAIL'})
-        result['scenarios'][scenario] = {'status': 'PASS' if all(item['status'] == 'PASS' for item in comparisons) else 'FAIL', 'runs': comparisons}
+        for ordinal in (1, 2, 3):
+            before, after = old.get(ordinal, {}), new.get(ordinal, {})
+            a, b = latency_value(before, scenario), latency_value(after, scenario)
+            old_cpu, new_cpu = counter(before, 'shell_cpu_percent_mean', 'shell_cpu_valid_records'), counter(after, 'shell_cpu_percent_mean', 'shell_cpu_valid_records')
+            old_rss, new_rss = counter(before, 'shell_rss_kib_peak', 'shell_rss_valid_records'), counter(after, 'shell_rss_kib_peak', 'shell_rss_valid_records')
+            metrics = {'latency': budget(a, b, 1.1, measure=scenario != 'idle'),
+                       'cpu': budget(old_cpu, new_cpu, 1.1, measure=scenario == 'idle'),
+                       'rss': budget(old_rss, new_rss, allowance=8192)}
+            comparisons.append({'run': ordinal, 'baseline_input_p95_ms': a, 'candidate_input_p95_ms': b,
+                                'baseline_cpu_percent': old_cpu, 'candidate_cpu_percent': new_cpu,
+                                'baseline_rss_kib': old_rss, 'candidate_rss_kib': new_rss,
+                                'metrics': metrics, 'status': aggregate(list(metrics.values()))})
+        complete = all(session.get('accepted_for_m0') is True and session.get('status') == 'COLLECTED'
+                       and len(session.get('runs', [])) == 3 for session in (old_session, new_session))
+        statuses = [item['status'] for item in comparisons]
+        if not complete:
+            statuses.append('PENDING')
+        result['scenarios'][scenario] = {'status': aggregate(statuses), 'runs': comparisons}
     matching_observations = observations.get('candidate_commit') == candidate_identity.get('commit') and identity_ok
     for name in OBSERVATIONS:
         entry = observations.get('checks', {}).get(name, {})
         observed = matching_observations and entry.get('observed') is True and isinstance(entry.get('evidence'), str) and bool(entry['evidence'].strip())
         result['observations'][name] = 'OBSERVED' if observed else 'FAIL' if matching_observations and entry.get('observed') is False and entry.get('evidence') else 'PENDING'
     reloads = observations.get('reload_measurements', [])
-    valid_reload = matching_observations and len(reloads) >= 3 and all(
-        item.get('method') == 'save-gesture-to-visible-frame' and number(item.get('frames')) and type(item['frames']) is int
-        and number(item.get('fps')) and item['fps'] >= 60 for item in reloads)
-    if valid_reload:
-        upper_bounds = [1000 * (item['frames'] + 1) / item['fps'] for item in reloads]
-        result['reload'] = {'status': 'PASS' if max(upper_bounds) <= 500 else 'FAIL', 'upper_bounds_ms': upper_bounds}
-    else:
-        result['reload'] = {'status': 'PENDING'}
+    valid_reloads = [item for item in reloads if matching_observations
+                     and item.get('method') == 'save-gesture-to-visible-frame' and number(item.get('frames')) and type(item['frames']) is int
+                     and number(item.get('fps')) and item['fps'] >= 60]
+    upper_bounds = [1000 * (item['frames'] + 1) / item['fps'] for item in valid_reloads]
+    reload_status = 'FAIL' if any(value > 500 for value in upper_bounds) else 'PASS' if len(upper_bounds) >= 3 and len(valid_reloads) == len(reloads) else 'PENDING'
+    result['reload'] = {'status': reload_status, 'upper_bounds_ms': upper_bounds}
     old_traffic, new_traffic = protocol.get('baseline', {}), protocol.get('candidate', {})
     valid_protocol = (identity_ok and protocol.get('architecture') == 'arm' and type(old_traffic.get('ticks')) is int and old_traffic['ticks'] >= 5
                       and protocol.get('baseline_source_archive_sha256') == '06a1241970b365a4d91fa5bee65561322d155cd79303c08d097bd7035e100c75'

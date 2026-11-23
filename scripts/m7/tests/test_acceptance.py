@@ -95,6 +95,26 @@ class GateTests(unittest.TestCase):
         self.observed['checks']['clock_label_pickers_gallery']['observed'] = False
         self.assertEqual(self.report()['gate'], 'FAIL')
 
+    def test_known_rss_failure_survives_other_missing_metrics(self):
+        for change in ('other latency', 'same latency', 'other run', 'CPU'):
+            self.setUp()
+            runs = self.after['gallery_flick']['runs']
+            runs[0]['sample']['shell_rss_kib_peak'] = 30000
+            if change == 'other latency': runs[2]['renderer_metrics'][0]['input_samples'] = 0
+            if change == 'same latency': runs[0]['renderer_metrics'][0]['input_samples'] = 0
+            if change == 'other run': runs.pop()
+            if change == 'CPU': runs[0]['sample']['shell_cpu_valid_records'] = 1
+            result = self.report()
+            self.assertEqual(result['scenarios']['gallery_flick']['status'], 'FAIL', change)
+            self.assertEqual(result['gate'], 'FAIL', change)
+
+    def test_one_known_reload_failure_survives_incomplete_recordings(self):
+        failed = {'method': 'save-gesture-to-visible-frame', 'fps': 60, 'frames': 30}
+        for values in ([failed], [failed, {}], [failed, {}, {}]):
+            self.observed['reload_measurements'] = values
+            self.assertEqual(self.report()['reload']['status'], 'FAIL')
+            self.assertEqual(self.report()['gate'], 'FAIL')
+
     def test_identity_requires_all_trust_checks_and_exact_candidate_commit(self):
         for key, value in identity().items():
             if value is True:
@@ -252,6 +272,9 @@ class IdentityCollectorTests(unittest.TestCase):
             (release / 'bin').mkdir(parents=True)
             for name in ('roundd', 'round-timer'):
                 (release / 'bin' / name).write_bytes(b'test binary')
+                (release / 'bin' / name).chmod(0o755)
+            for directory in (release, release / 'bin', release.parent, release.parent.parent, root / 'opt'):
+                directory.chmod(0o755)
             (root / 'opt/roundos/current').symlink_to(release)
             for name, value in [('proc/device-tree/model', 'Raspberry Pi Zero 2 W\0'),
                                 ('proc/sys/kernel/random/boot_id', 'boot'), ('etc/machine-id', 'unit-test-machine')]:

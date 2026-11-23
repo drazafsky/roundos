@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -121,6 +122,56 @@ func (s *State) integer(v spec.Value[int], fallback int) int {
 	}
 	return fallback
 }
+
+// Missing preview endpoints are inert defaults, chosen with the known value
+// and opposite endpoint. Explicit samples are never silently repaired.
+func (s *State) widgetRange(w spec.Widget) (int, int, error) {
+	if w.Type == "timePicker" {
+		return 0, 1439, nil
+	}
+	if w.Value == nil {
+		return 0, 0, nil
+	}
+	_, lowSample := s.values[w.MinBinding]
+	_, highSample := s.values[w.MaxBinding]
+	_, valueSample := s.values[w.Value.Binding]
+	knownLow, knownHigh := w.Min != nil || lowSample, w.Max != nil || highSample
+	knownValue := !w.Value.Bound || valueSample
+	low, high, value := int64(0), int64(1), int64(s.integer(*w.Value, 0))
+	if w.Min != nil {
+		low = int64(*w.Min)
+	} else if lowSample {
+		low = int64(s.integer(spec.Value[int]{Bound: true, Binding: w.MinBinding}, 0))
+	}
+	if w.Max != nil {
+		high = int64(*w.Max)
+	} else if highSample {
+		high = int64(s.integer(spec.Value[int]{Bound: true, Binding: w.MaxBinding}, 0))
+	}
+	switch {
+	case !knownLow && !knownHigh:
+		if knownValue {
+			low, high = value, value+1
+			if high > math.MaxInt32 {
+				low, high = value-1, value
+			}
+		}
+	case !knownLow:
+		low = high - 1
+		if knownValue {
+			low = min(low, value)
+		}
+	case !knownHigh:
+		high = low + 1
+		if knownValue {
+			high = max(high, value)
+		}
+	}
+	if low < math.MinInt32 || high > math.MaxInt32 || low >= high {
+		return 0, 0, fmt.Errorf("cannot infer a portable preview range")
+	}
+	return int(low), int(high), nil
+}
 func (s *State) boolean(v spec.Value[bool], fallback bool) bool {
 	if !v.Bound {
 		return v.Literal
@@ -197,21 +248,10 @@ func View(f *bundle.File, s *State) (wire.View, error) {
 				default:
 					return wire.View{}, fmt.Errorf("unmapped widget kind %s", w.Type)
 				}
-				if w.Min != nil {
-					item.Min = *w.Min
-				}
-				if w.Max != nil {
-					item.Max = *w.Max
-				}
-				if w.MinBinding != "" {
-					item.Min = s.integer(spec.Value[int]{Bound: true, Binding: w.MinBinding}, 0)
-				}
-				if w.MaxBinding != "" {
-					item.Max = s.integer(spec.Value[int]{Bound: true, Binding: w.MaxBinding}, item.Min+1)
-				}
-				if w.Type == "timePicker" {
-					item.Min = 0
-					item.Max = 1439
+				var err error
+				item.Min, item.Max, err = s.widgetRange(w)
+				if err != nil {
+					return wire.View{}, fmt.Errorf("screen %s widget %s: %w", screen.ID, w.ID, err)
 				}
 				if w.Step != nil {
 					item.Step = *w.Step

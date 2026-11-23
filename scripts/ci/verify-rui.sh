@@ -12,6 +12,9 @@ for layout in layouts/*.rui.yaml; do
   "$work/roundui" compile -o "$work/$name.rui.bin" -go "$work/$name.ids.go" -package main "$layout"
   "$work/roundui" inspect "$work/$name.rui.bin"
   "$work/roundui" preview -o "$work/$name.png" "$work/$name.rui.bin"
+  if [ -f "layouts/$name.sample.json" ]; then
+    "$work/roundui" preview -values "layouts/$name.sample.json" -o "$work/$name-sampled.png" "$work/$name.rui.bin"
+  fi
   "$work/roundui" compile -o "$work/$name-again.rui.bin" "$layout"
   cmp "$work/$name.rui.bin" "$work/$name-again.rui.bin"
 done

@@ -88,6 +88,55 @@ func TestSampleBindingsTypedAndRangeChecked(t *testing.T) {
 		t.Fatalf("out-of-range value accepted: %v", e)
 	}
 }
+
+func TestOmittedRangeSamplesUseKnownEndpointAndValue(t *testing.T) {
+	for _, test := range []struct {
+		min, max, value, samples string
+		low, high, selected      int
+	}{
+		{"{ bind: low }", "0", "0", "", -1, 0, 0},
+		{"0", "{ bind: high }", "5", "", 0, 5, 5},
+		{"{ bind: low }", "-10", "-15", "", -15, -10, -15},
+		{"{ bind: low }", "{ bind: high }", "2147483647", "", 2147483646, 2147483647, 2147483647},
+		{"{ bind: low }", "{ bind: high }", "-2147483648", "", -2147483648, -2147483647, -2147483648},
+		{"{ bind: low }", "{ bind: high }", "{ bind: chosen }", `{"low":-20,"high":-10,"chosen":-15}`, -20, -10, -15},
+	} {
+		source := fmt.Sprintf(`schema: roundos.rui/v1
+application:
+  id: example.range
+screens:
+  - id: root
+    title: Range
+    layout: list
+    groups:
+      - id: controls
+        widgets:
+          - id: picker
+            type: numberPicker
+            label: Pick
+            value: %s
+            min: %s
+            max: %s
+            onCommit: set
+`, test.value, test.min, test.max)
+		_, file, err := compile.Compile([]byte(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, err := NewState(file.Manifest, []byte(test.samples))
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err := View(file, state)
+		if err != nil {
+			t.Fatal(source, err)
+		}
+		widget := view.Screens[0].Widgets[0]
+		if widget.Min != test.low || widget.Max != test.high || widget.Value != test.selected {
+			t.Fatalf("wrong inferred preview range: %+v", widget)
+		}
+	}
+}
 func TestEffectiveGroupsAndVisibility(t *testing.T) {
 	_, f, e := compile.Compile(fixture(t, "timer.rui.yaml"))
 	if e != nil {

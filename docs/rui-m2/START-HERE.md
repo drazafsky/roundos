@@ -24,8 +24,8 @@ go build -o "$HOME/bin/roundui" ./cmd/roundui
 # Draw through the actual RoundOS 0.5.0 circular renderer, no DRM access
 "$HOME/bin/roundui" preview -o /tmp/timer.png \
   -values layouts/timer.sample.json /tmp/timer.rui.bin
-"$HOME/bin/roundui" preview -o /tmp/clock-settings.png \
-  -screen clock.settings -theme light \
+"$HOME/bin/roundui" preview -o /tmp/clock-options.png \
+  -screen clock.options -theme light \
   -values layouts/clock.sample.json layouts/clock.rui.yaml
 ```
 

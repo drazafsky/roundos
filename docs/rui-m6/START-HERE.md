@@ -30,6 +30,9 @@ invalid combination retains the previous valid unit while unrelated bindings
 can update. The bindings stay dirty for retry. A failed initial evaluation
 publishes nothing. Range changes use a new full layout revision and cancel
 incompatible drafts. Legacy integer actions are checked against published bounds.
+Offline previews infer omitted range samples from the known endpoint and value,
+while preserving explicit samples. Bundled Clock and Timer samples match their
+full layouts; the Clock options screen is `clock.options`.
 
 Root title, hero, subtitle and primary-button metadata also provide the legacy
 scalar fields. Preview and runtime use the same lowering. Applications provide

@@ -49,14 +49,26 @@ def bind(session_path, before, after):
         if len(records) < 45 or records[-1]['elapsed_seconds'] < 59:
             raise ValueError('Incomplete raw sampling interval')
         elapsed = -1
+        cpu_count = rss_count = 0
         for record in records:
             if not number(record.get('elapsed_seconds')) or not start <= instant(record['utc']) <= end or record['elapsed_seconds'] <= elapsed:
                 raise ValueError('Raw timestamps do not match the session')
             elapsed = record['elapsed_seconds']
-            pids = [process['pid'] for process in record['processes'] if process['name'] == 'roundd']
+            shells = [process for process in record['processes'] if process['name'] == 'roundd']
+            pids = [process['pid'] for process in shells]
             if pids != [before['service_pid']]:
                 raise ValueError('Sampler did not observe exactly the verified shell')
+            shell = shells[0]
+            if shell.get('cpu_percent') is not None:
+                if not number(shell['cpu_percent']): raise ValueError('Invalid raw CPU counter')
+                cpu_count += 1
+            if shell.get('rss_kib') is not None:
+                if not number(shell['rss_kib']) or shell['rss_kib'] <= 0: raise ValueError('Invalid raw RSS counter')
+                rss_count += 1
+        if min(cpu_count, rss_count) < 45:
+            raise ValueError('Too few valid CPU or RSS intervals')
         run['sample'] = m0.summarize_sample(path)
+        run['sample'].update(shell_cpu_valid_records=cpu_count, shell_rss_valid_records=rss_count)
         hashes[path.name] = hashlib.sha256(data).hexdigest()
     session['m7_identity'] = {key: before.get(key) for key in IDENTITY_KEYS}
     session['m7_identity'].update({'verified': True, 'before_utc': before['recorded_utc'], 'after_utc': after['recorded_utc'], 'raw_sha256': hashes})

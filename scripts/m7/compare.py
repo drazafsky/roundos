@@ -19,7 +19,8 @@ m0 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m0)
 
 SCENARIOS = ('idle', 'gallery_flick', 'timer_background', 'wifi_scan', 'reduce_motion')
-IDENTITY_KEYS = ('version', 'commit', 'binary_sha256', 'timer_binary_sha256', 'device_id_sha256', 'boot_id', 'service_pid')
+RELEASE_KEYS = ('version', 'commit', 'binary_sha256', 'timer_binary_sha256', 'device_id_sha256')
+IDENTITY_KEYS = (*RELEASE_KEYS, 'boot_id', 'service_pid', 'service_start_boottime_seconds')
 OBSERVATIONS = (
     'baseline_managed_boot', 'baseline_display_touch_encoder_wifi',
     'candidate_display_touch_encoder', 'clock_label_pickers_gallery',
@@ -62,6 +63,7 @@ def valid_identity(identity, baseline):
             and hex_id(identity.get('binary_sha256'), 64)
             and hex_id(identity.get('timer_binary_sha256'), 64)
             and hex_id(identity.get('device_id_sha256'), 64)
+            and number(identity.get('service_start_boottime_seconds')) and identity['service_start_boottime_seconds'] > 0
             and type(identity.get('service_pid')) is int and identity['service_pid'] > 0
             and isinstance(identity.get('boot_id'), str) and bool(identity['boot_id'])
             and (identity.get('version') == '0.5.0' if baseline else
@@ -75,23 +77,33 @@ def session_runs(session, scenario, identity):
             or session.get('target_seconds') != 60 or session.get('target_repeats') != 3
             or not number(session.get('interval_seconds')) or not .2 <= session['interval_seconds'] <= 30):
         return None
-    binding = session.get('m7_identity', {})
-    if binding.get('verified') is not True or any(binding.get(key) != identity.get(key) for key in IDENTITY_KEYS):
-        return None
-    hashes = binding.get('raw_sha256', {})
-    if set(hashes) != {'run-01.jsonl', 'run-02.jsonl', 'run-03.jsonl'} or not all(hex_id(value, 64) for value in hashes.values()):
-        return None
     runs = session.get('runs', [])
     if len(runs) != 3 or [run.get('run') for run in runs] != [1, 2, 3]:
         return None
     for run in runs:
+        binding = run.get('m7_identity', {})
+        if (binding.get('verified') is not True or any(binding.get(key) != identity.get(key) for key in RELEASE_KEYS)
+                or not number(binding.get('service_start_boottime_seconds'))
+                or not number(binding.get('window_start_boottime_seconds'))
+                or binding['service_start_boottime_seconds'] < binding['window_start_boottime_seconds']
+                or type(binding.get('service_pid')) is not int or binding['service_pid'] <= 0):
+            return None
+        hashes = binding.get('raw_sha256', {})
+        if set(hashes) != {'run-01.jsonl'} or not all(hex_id(value, 64) for value in hashes.values()):
+            return None
         sample = run.get('sample', {})
         if (run.get('complete') is not True or sample.get('records', 0) < 45
                 or not number(sample.get('shell_cpu_percent_mean')) or not number(sample.get('shell_rss_kib_peak'))
-                or sample['shell_rss_kib_peak'] <= 0):
+                or sample['shell_rss_kib_peak'] <= 0 or sample.get('shell_cpu_valid_records', 0) < 45
+                or sample.get('shell_rss_valid_records', 0) < 45):
             return None
         timings = [m0.ms(item.get('input-to-present-p95')) for item in run.get('renderer_metrics', [])]
         if not timings or any(not number(value) or scenario != 'idle' and value <= 0 for value in timings):
+            return None
+        if any(item.get('run_scoped') is not True or item.get('service_pid') != binding['service_pid']
+               or item.get('boot_id') != binding.get('boot_id')
+               or type(item.get('input_samples')) is not int or item['input_samples'] < (0 if scenario == 'idle' else 1)
+               for item in run.get('renderer_metrics', [])):
             return None
     return runs
 

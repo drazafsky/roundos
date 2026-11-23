@@ -8,10 +8,12 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import stat
 import subprocess
+import time
 
 
 def command(args):
@@ -59,9 +61,12 @@ def scan(expected_version):
     pid_text = command(['systemctl', 'show', '-p', 'MainPID', '--value', 'roundos.service']) or ''
     pid = int(pid_text) if pid_text.isdecimal() else 0
     running_matches = False
+    start_ticks = 0
     try:
         running = Path(f'/proc/{pid}/exe').stat()
         running_matches = (running.st_dev, running.st_ino) == (installed.st_dev, installed.st_ino)
+        process_stat = Path(f'/proc/{pid}/stat').read_text()
+        start_ticks = int(process_stat[process_stat.rfind(')') + 1:].split()[19])
     except OSError:
         pass
     declared_version = metadata.get('version')
@@ -77,6 +82,8 @@ def scan(expected_version):
         'release': str(release), 'version': version, 'build': build,
         'commit': declared_commit if isinstance(declared_commit, str) else build if re.fullmatch(r'[0-9a-f]{40}', build) else None,
         'binary_sha256': digest(binary), 'service_pid': pid,
+        'service_start_boottime_seconds': start_ticks / os.sysconf('SC_CLK_TCK'),
+        'recorded_boottime_seconds': time.clock_gettime(time.CLOCK_BOOTTIME),
         'timer_binary_sha256': digest(timer), 'root_owned_regular_timer': trusted_timer,
         'reference_pi': reference, 'service_active': active,
         'root_owned_regular_binary': trusted_binary,
@@ -84,7 +91,7 @@ def scan(expected_version):
         'release_metadata_matches': metadata_matches,
         'expected_version_matches': version == expected_version,
     }
-    result['identity_verified'] = all((reference, active, trusted_binary, trusted_timer, running_matches, metadata_matches, version == expected_version))
+    result['identity_verified'] = all((reference, active, trusted_binary, trusted_timer, running_matches, start_ticks > 0, metadata_matches, version == expected_version))
     return result
 
 

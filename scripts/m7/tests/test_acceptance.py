@@ -1,5 +1,4 @@
 """Synthetic unit fixtures exercise gate decisions; they are not Pi evidence."""
-import copy
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -18,18 +17,21 @@ def identity(baseline=False):
                                    'root_owned_regular_binary', 'root_owned_regular_timer', 'release_metadata_matches', 'expected_version_matches')}
     result.update(version='0.5.0' if baseline else '0.6.0-dev.1.g' + 'a' * 7,
                   commit=None if baseline else 'a' * 40, binary_sha256='b' * 64,
-                  timer_binary_sha256='c' * 64, device_id_sha256='d' * 64, boot_id='test-boot', service_pid=123)
+                  timer_binary_sha256='c' * 64, device_id_sha256='d' * 64, boot_id='test-boot', service_pid=123,
+                  service_start_boottime_seconds=100)
     return result
 
 
 def sessions(device):
+    bound = {**{key: device[key] for key in gate.IDENTITY_KEYS}, 'verified': True,
+             'raw_sha256': {'run-01.jsonl': 'e' * 64}, 'window_start_boottime_seconds': 99}
     return {name: {'scenario': name, 'accepted_for_m0': True, 'reference_pi_managed': True,
                    'status': 'COLLECTED', 'target_seconds': 60, 'target_repeats': 3, 'interval_seconds': 1,
-                   'm7_identity': {**{key: device[key] for key in gate.IDENTITY_KEYS}, 'verified': True,
-                                   'raw_sha256': {f'run-{i:02d}.jsonl': 'e' * 64 for i in (1, 2, 3)}},
-                   'runs': [{'run': i, 'complete': True, 'sample': {'records': 60, 'shell_cpu_percent_mean': 10,
-                                                                 'shell_rss_kib_peak': 20000},
-                             'renderer_metrics': [{'input-to-present-p95': '10ms'}]} for i in (1, 2, 3)]}
+                   'runs': [{'run': i, 'complete': True, 'm7_identity': dict(bound),
+                             'sample': {'records': 60, 'shell_cpu_percent_mean': 10, 'shell_rss_kib_peak': 20000,
+                                        'shell_cpu_valid_records': 60, 'shell_rss_valid_records': 60},
+                             'renderer_metrics': [{'input-to-present-p95': '10ms', 'run_scoped': True,
+                                                   'input_samples': 10, 'service_pid': device['service_pid'], 'boot_id': device['boot_id']}]} for i in (1, 2, 3)]}
             for name in gate.SCENARIOS}
 
 
@@ -60,11 +62,11 @@ class GateTests(unittest.TestCase):
                 if change == 'device': self.new['device_id_sha256'] = 'f' * 64
                 if change == 'commit': self.observed['candidate_commit'] = 'f' * 40
                 entry = self.after['gallery_flick']
-                if change == 'binding': entry['m7_identity']['service_pid'] += 1
+                if change == 'binding': entry['runs'][0]['m7_identity']['service_pid'] += 1
                 if change == 'sample': entry['runs'][0]['sample']['shell_cpu_percent_mean'] = float('nan')
                 if change == 'duration': entry['target_seconds'] = 10
                 if change == 'metrics': entry['runs'][0]['renderer_metrics'] = [{'input-to-present-p95': '0s'}]
-                if change == 'hashes': entry['m7_identity']['raw_sha256'] = {}
+                if change == 'hashes': entry['runs'][0]['m7_identity']['raw_sha256'] = {}
                 self.assertEqual(self.report()['gate'], 'PENDING')
 
     def test_each_run_must_meet_latency_cpu_and_memory_limits(self):
@@ -113,6 +115,24 @@ class GateTests(unittest.TestCase):
             with self.assertRaises(FileExistsError): gate.write_new(output, {'gate': 'OTHER'})
             self.assertEqual(json.loads(output.read_text()), {'gate': 'PENDING'})
 
+    def test_reused_latency_or_insufficient_counters_stay_pending(self):
+        for change in ('old process', 'no scope', 'no inputs', 'few CPU', 'few RSS'):
+            self.setUp()
+            run = self.after['gallery_flick']['runs'][0]
+            if change == 'old process': run['m7_identity']['window_start_boottime_seconds'] = 101
+            if change == 'no scope': run['renderer_metrics'][0].pop('run_scoped')
+            if change == 'no inputs': run['renderer_metrics'][0]['input_samples'] = 0
+            if change == 'few CPU': run['sample']['shell_cpu_valid_records'] = 1
+            if change == 'few RSS': run['sample']['shell_rss_valid_records'] = 1
+            self.assertEqual(self.report()['gate'], 'PENDING', change)
+
+    def test_service_restarts_require_explicit_option(self):
+        import collect
+        from unittest import mock
+        with mock.patch.object(sys, 'argv', ['collect.py', '--expect-version', '0.5.0', '--scenario', 'idle', '--output', '/unused']), mock.patch.object(collect.subprocess, 'run') as run, mock.patch.object(collect.argparse.ArgumentParser, 'error', side_effect=ValueError):
+            with self.assertRaises(ValueError): collect.main()
+            run.assert_not_called()
+
 
 class BindingTests(unittest.TestCase):
     def setUp(self):
@@ -124,7 +144,6 @@ class BindingTests(unittest.TestCase):
         self.before['recorded_utc'] = self.start.isoformat()
         self.after['recorded_utc'] = (self.start + timedelta(seconds=200)).isoformat()
         self.session = sessions(self.before)['idle']
-        self.session.pop('m7_identity')
         self.session.update(start_utc=self.before['recorded_utc'], end_utc=self.after['recorded_utc'])
         for run in self.session['runs']:
             offset = (run['run'] - 1) * 61
@@ -142,7 +161,7 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(bound['runs'][0]['sample']['shell_rss_kib_peak'], 12345)
         self.assertEqual(len(bound['m7_identity']['raw_sha256']), 3)
         self.assertEqual(self.path.read_bytes(), original)
-        self.assertIsNotNone(gate.session_runs(bound, 'idle', self.before))
+        self.assertEqual(bound['runs'][0]['sample']['shell_cpu_valid_records'], 60)
 
     def test_rejects_restart_or_other_process_samples(self):
         self.after['service_pid'] = 124
@@ -160,6 +179,27 @@ class BindingTests(unittest.TestCase):
         path.write_text('\n'.join(records))
         self.before['recorded_utc'] = (self.start + timedelta(seconds=1)).isoformat()
         with self.assertRaises(ValueError): bind_session.bind(self.path, self.before, self.after)
+    def test_rejects_mostly_missing_or_invalid_shell_counters(self):
+        path = self.path.parent / 'run-01.jsonl'
+        original = path.read_text()
+        for replacement in ('null', '-1', 'NaN'):
+            path.write_text(original.replace('"cpu_percent": 2', '"cpu_percent": ' + replacement))
+            with self.assertRaises(ValueError): bind_session.bind(self.path, self.before, self.after)
+
+
+class LatencyTests(unittest.TestCase):
+    def test_filters_pid_boot_window_and_retains_only_safe_measurements(self):
+        import latency
+        def record(pid='123', boot='testboot', stamp='1000000'):
+            return {'_PID': pid, '_BOOT_ID': boot, '__REALTIME_TIMESTAMP': stamp,
+                    'MESSAGE': 'RoundOS performance: input-to-present-p95=10ms (n=7; unsafe-extra-text)'}
+        rows = [record(), record('124'), record(boot='otherboot'), record(stamp='4000000')]
+        result = latency.parse(rows, identity(), '1970-01-01T00:00:00+00:00', '1970-01-01T00:00:02+00:00')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['input_samples'], 7)
+        self.assertEqual(result[0]['input-to-present-p95'], '10ms')
+        self.assertNotIn('unsafe-extra-text', json.dumps(result))
+
 
 class IdentityCollectorTests(unittest.TestCase):
     def test_installed_build_id_identifies_candidate_without_release_json(self):
@@ -179,6 +219,9 @@ class IdentityCollectorTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(value)
             (root / 'proc/123').mkdir(parents=True)
+            fields = ['0'] * 22
+            fields[19] = '10000'
+            (root / 'proc/123/stat').write_text('123 (roundd) ' + ' '.join(fields))
             os.link(release / 'bin/roundd', root / 'proc/123/exe')
             def mapped(value):
                 return root / str(value).lstrip('/')

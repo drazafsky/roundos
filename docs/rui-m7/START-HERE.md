@@ -7,7 +7,8 @@ remains open until the evidence below is collected and reviewed.
 Use the reference Pi Zero 2 W / HyperPixel 480×480 over SSH. Keep the existing
 managed 0.5.0 release and its state. Collect baseline evidence before changing
 the release. The operator controls reboot, installation and display transitions
-from an SSH terminal; the evidence tools perform read-only collection.
+from an SSH terminal; the collector restarts only with its explicit --restart-for-latency option.
+Identity inspection, sample binding and comparison remain read-only.
 
 ## Prepare the exact candidate and recovery files
 
@@ -27,10 +28,10 @@ to its full 40-character commit. The installed roundd build ID must match it.
 Before the first installation, preserve the original root-owned control files:
 
 ```sh
-sudo mkdir -m 0700 /var/lib/roundos/m7-recovery
-sudo cp -p /etc/systemd/system/roundos.service /var/lib/roundos/m7-recovery/roundos.service
-sudo cp -p /usr/local/sbin/roundosctl /var/lib/roundos/m7-recovery/roundosctl
-sudo sh -c 'cd /opt/roundos/releases/0.5.0 && sha256sum -c SHA256SUMS'
+sudo mkdir -m 0700 /var/lib/roundos/m7-recovery && \
+sudo cp -p /etc/systemd/system/roundos.service /var/lib/roundos/m7-recovery/roundos.service && \
+sudo cp -p /usr/local/sbin/roundosctl /var/lib/roundos/m7-recovery/roundosctl && \
+sudo sh -c 'cd /opt/roundos/releases/0.5.0 && sha256sum -c SHA256SUMS' && \
 sudo sh -c 'cd /var/lib/roundos/m7-recovery && sha256sum roundos.service roundosctl > SHA256SUMS'
 ```
 
@@ -50,45 +51,53 @@ Newer readiness-capable release pairs use normal roundosctl rollback.
 
 First observe a managed 0.5.0 boot, display/touch, gestures, installed encoder
 (if present), and Wi-Fi reconnect. Record actual observations, not expectations.
-Then collect all baseline scenarios in the same boot without restarting roundd:
+Then collect the baseline scenarios. Each run starts a new managed shell:
 
 ```sh
 mkdir -m 0700 -p ~/roundos-m7-evidence/baseline ~/roundos-m7-evidence/candidate
-python3 scripts/m7/collect.py --expect-version 0.5.0 --scenario idle --output ~/roundos-m7-evidence/baseline/idle
-python3 scripts/m7/collect.py --expect-version 0.5.0 --scenario gallery_flick --output ~/roundos-m7-evidence/baseline/gallery_flick
-python3 scripts/m7/collect.py --expect-version 0.5.0 --scenario timer_background --output ~/roundos-m7-evidence/baseline/timer_background
-python3 scripts/m7/collect.py --expect-version 0.5.0 --scenario wifi_scan --output ~/roundos-m7-evidence/baseline/wifi_scan
-python3 scripts/m7/collect.py --expect-version 0.5.0 --scenario reduce_motion --output ~/roundos-m7-evidence/baseline/reduce_motion
+python3 scripts/m7/collect.py --expect-version 0.5.0 --restart-for-latency --scenario idle --output ~/roundos-m7-evidence/baseline/idle
+python3 scripts/m7/collect.py --expect-version 0.5.0 --restart-for-latency --scenario gallery_flick --output ~/roundos-m7-evidence/baseline/gallery_flick
+python3 scripts/m7/collect.py --expect-version 0.5.0 --restart-for-latency --scenario timer_background --output ~/roundos-m7-evidence/baseline/timer_background
+python3 scripts/m7/collect.py --expect-version 0.5.0 --restart-for-latency --scenario wifi_scan --output ~/roundos-m7-evidence/baseline/wifi_scan
+python3 scripts/m7/collect.py --expect-version 0.5.0 --restart-for-latency --scenario reduce_motion --output ~/roundos-m7-evidence/baseline/reduce_motion
 ```
 
-Each command prompts for three independent 60-second runs. Follow its displayed
+Each command prompts for three independent 60-second runs and explicitly
+restarts roundos.service after you prepare each workload. The original renderer
+keeps a rolling 256-input window, so a fresh process is required to exclude
+prior runs. All navigation and controls after restart belong to that workload.
+The journal reader accepts only that PID and boot, with a summary inside its
+new process window. An interactive run with no measured inputs stays pending. Follow its displayed
 workload, using the same theme, text scale, input method, network and device
 configuration on both releases. Reduce Motion must be enabled for its scenario
 and reset to the same setting for each following workload. The managed service
 must log performance summaries every 60 seconds; retain only the collector's
 allowlisted timing values. CPU and RSS use the original sampler's definitions.
 
-The wrapper uses sudo only for read-only identity inspection. Enter any sudo
+The wrapper uses sudo for the explicitly requested service restarts and
+read-only identity inspection. Enter any sudo
 password in your own SSH terminal. Outputs start private (0600/0700), refuse
 existing paths, and never record process arguments, SSIDs, editor values or
 credentials. Before/after identity must match the actual root-owned running
 binary, Timer hash, Pi identity, boot and PID. Raw process samples are checked
-against that PID and hashed; CPU/RSS summaries are recalculated. Incomplete
-runs, absent journal timings, a host smoke test or a restarted shell cannot pass.
+against that PID and hashed; CPU/RSS summaries are recalculated and require at least 45 finite,
+nonnegative CPU readings and 45 positive RSS readings per run. Incomplete
+runs, absent journal timings, a host smoke test or an unexpected restart during sampling cannot pass.
 
 From the verified candidate package directory, after baseline collection:
 
 ```sh
-sudo /usr/bin/systemctl stop roundos.service
-sudo sh scripts/install-release.sh
-sudo /usr/local/sbin/roundosctl verify
+sudo /usr/bin/systemctl stop roundos.service && \
+sudo sh scripts/install-release.sh && \
+sudo /usr/local/sbin/roundosctl verify && \
 sudo /usr/local/sbin/roundosctl activate
 ```
 
 Observe the launcher and bounded readiness, then reboot from SSH and confirm
 boot/Wi-Fi/display. Collect the same five scenarios with
---expect-version "$CANDIDATE_VERSION" and output under candidate/SCENARIO.
-Finish all performance collection before other restart/desktop/recovery checks.
+--expect-version "$CANDIDATE_VERSION" --restart-for-latency and output under
+candidate/SCENARIO.
+Finish all performance collection before the separate desktop/recovery checks.
 
 Run the traffic test on the Pi from the matching source workspace against the
 installed Timer, using the available native Go toolchain:
@@ -151,16 +160,16 @@ observe the restored desktop. Before restoring 0.5.0, verify its release hashes
 and the saved control hashes again. Stop the manual shell first if one exists.
 
 ```sh
-sudo sh -c 'cd /opt/roundos/releases/0.5.0 && sha256sum -c SHA256SUMS'
-sudo sh -c 'cd /var/lib/roundos/m7-recovery && sha256sum -c SHA256SUMS'
-sudo install -m 0644 /var/lib/roundos/m7-recovery/roundos.service /etc/systemd/system/roundos.service
-sudo install -m 0755 /var/lib/roundos/m7-recovery/roundosctl /usr/local/sbin/roundosctl
-sudo ln -s /opt/roundos/releases/0.5.0 /opt/roundos/.m7-current
-sudo mv -Tf /opt/roundos/.m7-current /opt/roundos/current
-sudo ln -s "/opt/roundos/releases/$CANDIDATE_VERSION" /opt/roundos/.m7-previous
-sudo mv -Tf /opt/roundos/.m7-previous /opt/roundos/previous
-sudo systemctl daemon-reload
-sudo /usr/local/sbin/roundosctl verify
+sudo sh -c 'cd /opt/roundos/releases/0.5.0 && sha256sum -c SHA256SUMS' && \
+sudo sh -c 'cd /var/lib/roundos/m7-recovery && sha256sum -c SHA256SUMS' && \
+sudo install -m 0644 /var/lib/roundos/m7-recovery/roundos.service /etc/systemd/system/roundos.service && \
+sudo install -m 0755 /var/lib/roundos/m7-recovery/roundosctl /usr/local/sbin/roundosctl && \
+sudo ln -s /opt/roundos/releases/0.5.0 /opt/roundos/.m7-current && \
+sudo mv -Tf /opt/roundos/.m7-current /opt/roundos/current && \
+sudo ln -s "/opt/roundos/releases/$CANDIDATE_VERSION" /opt/roundos/.m7-previous && \
+sudo mv -Tf /opt/roundos/.m7-previous /opt/roundos/previous && \
+sudo systemctl daemon-reload && \
+sudo /usr/local/sbin/roundosctl verify && \
 sudo /usr/local/sbin/roundosctl activate
 ```
 

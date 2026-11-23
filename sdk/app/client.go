@@ -57,26 +57,27 @@ func fromWire(m wire.Message) Event {
 }
 
 type Client struct {
-	conn                  net.Conn
-	mu                    sync.Mutex
-	events                chan Event
-	done                  chan struct{}
-	once                  sync.Once
-	closed                atomic.Bool
-	last                  *wire.View
-	secureEditor          string
-	textRequests          map[string]bool
-	trackEditorResults    bool
-	editorResults         map[string]bool
-	capabilities          []string
-	selected              bool
-	legacy                *wire.View
-	acked, sent           *wire.View
-	transition            *wire.View
-	sentTransition        bool
-	layout, revision      uint64
-	pending, forcePending bool
-	ackTimer              *time.Timer
+	conn                       net.Conn
+	mu                         sync.Mutex
+	events                     chan Event
+	done                       chan struct{}
+	once                       sync.Once
+	closed                     atomic.Bool
+	last                       *wire.View
+	secureEditor               string
+	textRequests               map[string]bool
+	trackEditorResults         bool
+	editorResults              map[string]bool
+	capabilities               []string
+	selected                   bool
+	legacy                     *wire.View
+	acked, sent                *wire.View
+	transition                 *wire.View
+	clearInFlight              *wire.View
+	clearLayout, clearRevision uint64
+	layout, revision           uint64
+	pending, forcePending      bool
+	ackTimer                   *time.Timer
 }
 
 func Connect() (*Client, error) {

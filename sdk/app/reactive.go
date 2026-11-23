@@ -197,9 +197,14 @@ func (c *Client) publishNextLocked(force bool) error {
 }
 
 func (c *Client) trackUpdateLocked(msg wire.Message, view wire.View, transition bool) {
+	// Keep the clear until its own ACK, even if a replacement snapshot
+	// supersedes the ordinary pending update before that ACK arrives.
+	if view.Dialog == nil && (transition || c.clearInFlight != nil || c.sent != nil && c.sent.Dialog != nil || c.acked != nil && c.acked.Dialog != nil) {
+		c.clearInFlight = &view
+		c.clearLayout, c.clearRevision = msg.LayoutRevision, msg.NewRevision
+	}
 	c.layout, c.revision = msg.LayoutRevision, msg.NewRevision
 	c.sent = &view
-	c.sentTransition = transition
 	if transition {
 		c.transition = nil
 	}
@@ -239,18 +244,21 @@ func (c *Client) handleControl(msg wire.Message) (bool, error) {
 		return true, nil
 	}
 	if msg.Type == "resync_required" {
-		if c.pending && c.sentTransition {
-			c.transition = c.sent
+		if c.clearInFlight != nil {
+			c.transition = c.clearInFlight
 		}
 		c.pending = false
 		return true, c.publishNextLocked(true)
+	}
+	if c.clearInFlight != nil && msg.LayoutRevision == c.clearLayout && msg.NewRevision == c.clearRevision {
+		c.clearInFlight = nil
 	}
 	if msg.LayoutRevision < c.layout || msg.LayoutRevision == c.layout && msg.NewRevision < c.revision {
 		return true, nil
 	}
 	if !c.pending || msg.LayoutRevision != c.layout || msg.NewRevision != c.revision {
-		if c.pending && c.sentTransition {
-			c.transition = c.sent
+		if c.clearInFlight != nil {
+			c.transition = c.clearInFlight
 		}
 		c.pending = false
 		return true, c.publishNextLocked(true)
@@ -260,7 +268,6 @@ func (c *Client) handleControl(msg wire.Message) (bool, error) {
 	}
 	c.acked = c.sent
 	c.sent = nil
-	c.sentTransition = false
 	c.pending = false
 	return true, c.publishNextLocked(false)
 }

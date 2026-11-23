@@ -176,6 +176,60 @@ func TestDialogClearReopenSurvivesCoalescingAndResync(t *testing.T) {
 	ack(t, peer, reopen)
 }
 
+func TestAcknowledgedDialogClearSurvivesResyncAndReplacement(t *testing.T) {
+	for _, replacement := range []bool{false, true} {
+		t.Run(fmt.Sprint("replacement=", replacement), func(t *testing.T) {
+			c, peer := reactiveClient(t, wire.Capabilities())
+			view := appView("10")
+			view.Dialog = &wire.Dialog{ID: "confirm", Title: "Confirm", Cancel: "No", Confirm: "Yes", CancelAction: "cancel", ConfirmAction: "confirm"}
+			initial := publishAndRead(t, c, peer, view)
+			ack(t, peer, initial)
+			noAppMessage(t, peer)
+			cleared := wire.CopyView(view)
+			cleared.Dialog = nil
+			publish := func(view wire.View) wire.Message {
+				if !replacement {
+					return publishAndRead(t, c, peer, view)
+				}
+				done := make(chan error, 1)
+				go func() { done <- c.PublishSnapshot(context.Background(), view) }()
+				msg := readAppMessage(t, peer)
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+				return msg
+			}
+			clearMessage := publish(cleared)
+			var superseded wire.Message
+			if replacement {
+				superseded = publish(view)
+			} else {
+				if err := c.Publish(view); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := wire.Write(peer, wire.Message{Version: wire.Version, Type: "resync_required"}); err != nil {
+				t.Fatal(err)
+			}
+			retry := readAppMessage(t, peer)
+			if retry.View == nil || retry.View.Dialog != nil {
+				t.Fatal("resync skipped immediate clear", retry)
+			}
+			ack(t, peer, clearMessage)
+			if replacement {
+				ack(t, peer, superseded)
+			}
+			ack(t, peer, retry)
+			reopen := readAppMessage(t, peer)
+			if reopen.View == nil || reopen.View.Dialog == nil {
+				t.Fatal("dialog did not reopen after recovered clear", reopen)
+			}
+			ack(t, peer, reopen)
+			noAppMessage(t, peer)
+		})
+	}
+}
+
 func TestReplacementSnapshotSupersedesUnacknowledgedUpdate(t *testing.T) {
 	c, peer := reactiveClient(t, wire.Capabilities())
 	view := appView("10")

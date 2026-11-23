@@ -62,7 +62,7 @@ visibility also changes structure. Every frame remains at most 64 KiB, with
 the original 16-screen/64-widget budgets and a 2,048-property batch bound.
 
 The SDK tracks one pending update, the latest desired view and at most one dialog
-clear barrier. These are bounded snapshots,
+clear barrier and its acknowledgement identity. These are bounded snapshots,
 not an accumulating event queue. A clear/reopen sequence survives coalescing and
 resync. Writes have a two-second deadline and an unacknowledged update closes
 the connection after three seconds. Ordinary application notifications and

@@ -51,10 +51,11 @@ func (w *trafficWriter) Write(data []byte) (int, error) {
 }
 
 type timerTrafficMeter struct {
-	modern, ready bool
-	current       wire.View
-	label         string
-	result        timerTraffic
+	modern, ready    bool
+	current          wire.View
+	label            string
+	layout, revision uint64
+	result           timerTraffic
 }
 
 func (m *timerTrafficMeter) accept(message wire.Message, rawBytes int64) (bool, error) {
@@ -73,13 +74,33 @@ func (m *timerTrafficMeter) accept(message wire.Message, rawBytes int64) (bool, 
 		if message.View == nil {
 			return false, fmt.Errorf("missing Timer snapshot")
 		}
+		if m.modern && (message.LayoutRevision == 0 || message.LayoutRevision <= m.layout || message.NewRevision != 1 || message.BaseRevision != 0) {
+			return false, fmt.Errorf("invalid Timer snapshot revisions")
+		}
+		if err := wire.ValidateView(*message.View); err != nil {
+			return false, err
+		}
+		if !wire.MessageFits(message) {
+			return false, fmt.Errorf("oversized Timer snapshot")
+		}
 		m.current = wire.CopyView(*message.View)
+		m.layout, m.revision = message.LayoutRevision, message.NewRevision
 	case "widget_patch":
-		var err error
-		m.current, err = wire.ApplyProperties(m.current, message.Updates)
+		if !m.modern || !m.ready || message.LayoutRevision != m.layout || message.BaseRevision != m.revision || message.NewRevision <= message.BaseRevision || message.NewRevision != message.BaseRevision+1 {
+			return false, fmt.Errorf("invalid Timer patch revisions")
+		}
+		if !wire.MessageFits(message) {
+			return false, fmt.Errorf("oversized Timer patch")
+		}
+		next, err := wire.ApplyProperties(m.current, message.Updates)
 		if err != nil {
 			return false, err
 		}
+		if !wire.MessageFits(wire.Message{Version: wire.Version, Type: "view", View: &next, LayoutRevision: message.LayoutRevision, NewRevision: 1}) {
+			return false, fmt.Errorf("oversized reconstructed Timer snapshot")
+		}
+		m.current = next
+		m.revision = message.NewRevision
 	case "view_patch":
 		if m.modern || !m.ready || message.Patch == nil {
 			return false, fmt.Errorf("unexpected legacy patch")
@@ -199,13 +220,13 @@ func measureTimerTraffic(t *testing.T, executable string, modern bool) timerTraf
 func TestTimerMeterCountsRawAndAuxiliaryFrames(t *testing.T) {
 	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer"}}}
 	meter := timerTrafficMeter{modern: true}
-	if _, err := meter.accept(wire.Message{Type: "view", View: &view, LayoutRevision: 1}, 0); err != nil {
+	if _, err := meter.accept(wire.Message{Type: "view", View: &view, LayoutRevision: 1, NewRevision: 1}, 0); err != nil {
 		t.Fatal(err)
 	}
 	var stream bytes.Buffer
 	for _, body := range []string{
 		`{ "version":7, "type":"diagnostic", "padding":"` + strings.Repeat("x", 500) + `" }`,
-		`{ "version":7, "type":"widget_patch", "padding":"` + strings.Repeat("y", 500) + `", "updates":[{"property":"primary","string":"09"}] }`,
+		`{ "version":7, "type":"widget_patch", "layout_revision":1, "base_revision":1, "new_revision":2, "padding":"` + strings.Repeat("y", 500) + `", "updates":[{"property":"primary","string":"09"}] }`,
 	} {
 		var header [4]byte
 		binary.BigEndian.PutUint32(header[:], uint32(len(body)))
@@ -237,12 +258,56 @@ func TestTimerMeterRejectsPostStartupLegacySnapshots(t *testing.T) {
 		t.Fatal("startup exemption failed", err)
 	}
 	modern := legacy
-	modern.LayoutRevision = 1
+	modern.LayoutRevision, modern.NewRevision = 1, 1
 	if _, err := meter.accept(modern, 100); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := meter.accept(legacy, 100); err == nil {
 		t.Fatal("post-startup full tree ignored")
+	}
+}
+
+func TestTimerMeterRejectsInvalidRevisionsWithoutCountingOrAcknowledgingTicks(t *testing.T) {
+	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer"}}}
+	value := "09"
+	for _, test := range []struct {
+		name               string
+		layout, base, next uint64
+	}{
+		{"zero layout", 0, 1, 2}, {"wrong layout", 2, 1, 2}, {"zero base", 1, 0, 1},
+		{"stale base", 1, 2, 3}, {"duplicate", 1, 1, 1}, {"zero next", 1, 1, 0}, {"skipped", 1, 1, 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meter := timerTrafficMeter{modern: true}
+			initial := wire.Message{Type: "view", View: &view, LayoutRevision: 1, NewRevision: 1}
+			if _, err := meter.accept(initial, 100); err != nil {
+				t.Fatal(err)
+			}
+			patch := wire.Message{Type: "widget_patch", LayoutRevision: test.layout, BaseRevision: test.base, NewRevision: test.next,
+				Updates: []wire.PropertyUpdate{{Property: "primary", String: &value}}}
+			if ack, err := meter.accept(patch, 100); err == nil || ack {
+				t.Fatal("invalid patch acknowledged")
+			}
+			if meter.current.Primary != "10" || meter.result.Ticks != 0 || meter.revision != 1 {
+				t.Fatal("rejected patch advanced the meter")
+			}
+			patch.LayoutRevision, patch.BaseRevision, patch.NewRevision = 1, 1, 2
+			if ack, err := meter.accept(patch, 100); err != nil || !ack || meter.result.Ticks != 1 {
+				t.Fatal("valid patch rejected after invalid patch", err)
+			}
+		})
+	}
+	for _, revision := range []struct{ layout, base, next uint64 }{{1, 0, 0}, {1, 1, 1}, {1, 0, 2}} {
+		meter := timerTrafficMeter{modern: true}
+		if ack, err := meter.accept(wire.Message{Type: "view", View: &view, LayoutRevision: revision.layout, BaseRevision: revision.base, NewRevision: revision.next}, 100); err == nil || ack || meter.ready {
+			t.Fatal("invalid startup snapshot acknowledged")
+		}
+	}
+	meter := timerTrafficMeter{modern: true}
+	initial := wire.Message{Type: "view", View: &view, LayoutRevision: 1, NewRevision: 1}
+	meter.accept(initial, 100)
+	if ack, err := meter.accept(initial, 100); err == nil || ack || meter.result.FullTrees != 0 {
+		t.Fatal("duplicate snapshot accepted")
 	}
 }
 

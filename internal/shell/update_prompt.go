@@ -343,6 +343,9 @@ func (m *Model) DrawUpdatePrompt(im *image.RGBA) {
 }
 
 func (m *Model) updatePromptMessage() string {
+	if m.Updates.Message != "" {
+		return m.Updates.Message
+	}
 	if m.Updates.Notice != nil && m.Updates.InstallRequestVersion == m.Updates.Notice.Version {
 		if message := m.installationMessage(); message != "" {
 			return message

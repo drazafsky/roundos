@@ -159,3 +159,29 @@ func TestInstallationReadErrorDoesNotPretendCachedProgressIsCurrent(t *testing.T
 		t.Fatal("unreadable status was presented as current progress")
 	}
 }
+
+func TestIgnoreFailureRemainsVisibleAfterInstallationAttempt(t *testing.T) {
+	for _, phase := range []string{"failed", "preparing"} {
+		t.Run(phase, func(t *testing.T) {
+			m := New()
+			m.SetInstallationStatus(update.InstallationState{Ready: true, Supported: true})
+			status := availableStatus(1, "0.6.0", "", false, "")
+			m.SetUpdateStatus(status)
+			m.MaybePromptUpdate()
+			m.Updates.PromptFocus = 1
+			m.UpdatePromptActivate()
+			install := m.TakeInstallRequest()
+			m.SetInstallationStatus(update.InstallationState{Ready: true, Supported: true, LastCommandID: install.ID,
+				Status: update.InstallStatus{ID: "transaction", Version: "0.6.0", Phase: phase}})
+			m.Updates.PromptFocus = 3
+			m.UpdatePromptActivate()
+			ignore := m.TakeUpdateRequest()
+			status.LastCommandID = ignore.ID
+			status.CommandErr = errors.New("disk write failed")
+			m.SetUpdateStatus(status)
+			if !strings.Contains(m.updatePromptMessage(), "COULD NOT IGNORE") {
+				t.Fatal("installation status hid the current Ignore error")
+			}
+		})
+	}
+}

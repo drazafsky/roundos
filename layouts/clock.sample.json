@@ -1,5 +1,10 @@
 {
   "clock.display": "10:24",
   "clock.caption": "FRIDAY",
-  "clock.use24Hour": true
+  "clock.use24Hour": true,
+  "clock.alarmMinute": 480,
+  "clock.snoozeMinutes": 5,
+  "clock.exampleDate": 20000,
+  "clock.minDate": 19635,
+  "clock.maxDate": 20365
 }

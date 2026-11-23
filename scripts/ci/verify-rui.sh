@@ -12,9 +12,16 @@ for layout in layouts/*.rui.yaml; do
   "$work/roundui" compile -o "$work/$name.rui.bin" -go "$work/$name.ids.go" -package main "$layout"
   "$work/roundui" inspect "$work/$name.rui.bin"
   "$work/roundui" preview -o "$work/$name.png" "$work/$name.rui.bin"
+  if [ -f "layouts/$name.sample.json" ]; then
+    "$work/roundui" preview -values "layouts/$name.sample.json" -o "$work/$name-sampled.png" "$work/$name.rui.bin"
+  fi
   "$work/roundui" compile -o "$work/$name-again.rui.bin" "$layout"
   cmp "$work/$name.rui.bin" "$work/$name-again.rui.bin"
 done
+
+# Built-in app presentation must match its checked-in embedded artifact.
+cmp "$work/clock.rui.bin" layouts/clock.rui.bin
+cmp "$work/timer.rui.bin" layouts/timer.rui.bin
 
 # M3 is an opt-in SDK example. Verify its checked-in embedded bundle and both
 # build targets without installing the demo or starting a shell/service.

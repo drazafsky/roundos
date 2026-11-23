@@ -92,6 +92,33 @@ func (s stateSnapshot) optText(p *spec.Value[string], max int) (string, error) {
 	}
 	return s.text(*p, max)
 }
+
+func (s stateSnapshot) widgetRange(w spec.Widget) (int, int, error) {
+	if w.Type == "timePicker" {
+		return 0, 1439, nil
+	}
+	low, high := 0, 0
+	if w.Min != nil {
+		low = *w.Min
+	}
+	if w.Max != nil {
+		high = *w.Max
+	}
+	var err error
+	if w.MinBinding != "" {
+		low, err = s.integer(spec.Value[int]{Bound: true, Binding: w.MinBinding})
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	if w.MaxBinding != "" {
+		high, err = s.integer(spec.Value[int]{Bound: true, Binding: w.MaxBinding})
+		if err != nil {
+			return 0, 0, err
+		}
+	}
+	return low, high, nil
+}
 func headingID(screen, group string) string {
 	h := sha256.Sum256([]byte(screen + "\x00" + group))
 	return fmt.Sprintf("rui.heading.%x", h[:10])
@@ -122,7 +149,7 @@ func buildViewSelected(f *bundle.File, states stateSnapshot, dialogID string, in
 		if err != nil {
 			return v, fmt.Errorf("screen %s title: %w", screen.ID, err)
 		}
-		sub, err := states.optText(screen.Subtitle, 240)
+		sub, err := states.optText(screen.Subtitle, wire.MaxSubtitleBytes)
 		if err != nil {
 			return v, fmt.Errorf("screen %s subtitle: %w", screen.ID, err)
 		}
@@ -190,14 +217,9 @@ func buildViewSelected(f *bundle.File, states stateSnapshot, dialogID string, in
 				default:
 					return v, fmt.Errorf("unsupported RUI widget %q", w.Type)
 				}
-				if w.Min != nil {
-					item.Min = *w.Min
-				}
-				if w.Max != nil {
-					item.Max = *w.Max
-				}
-				if w.Type == "timePicker" {
-					item.Min, item.Max = 0, 1439
+				item.Min, item.Max, err = states.widgetRange(w)
+				if err != nil {
+					return v, err
 				}
 				if w.Step != nil {
 					item.Step = *w.Step
@@ -235,6 +257,7 @@ func buildViewSelected(f *bundle.File, states stateSnapshot, dialogID string, in
 		}
 		v.Screens = append(v.Screens, sc)
 	}
+	v = wire.RootHeader(v)
 	if dialogID != "" {
 		found := false
 		for _, d := range f.Document.Dialogs {

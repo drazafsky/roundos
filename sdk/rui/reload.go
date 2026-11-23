@@ -170,7 +170,7 @@ func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, d
 		if err := text(screen.Hero, 80); err != nil {
 			return view, nil, err
 		}
-		if err := text(screen.Subtitle, 240); err != nil {
+		if err := text(screen.Subtitle, wire.MaxSubtitleBytes); err != nil {
 			return view, nil, err
 		}
 		for _, group := range screen.Groups {
@@ -192,9 +192,9 @@ func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, d
 					if err != nil {
 						return view, nil, err
 					}
-					low, high := 0, 1439
-					if widget.Type != "timePicker" {
-						low, high = *widget.Min, *widget.Max
+					low, high, err := states.widgetRange(widget)
+					if err != nil {
+						return view, nil, err
 					}
 					if value < low || value > high {
 						return view, nil, fmt.Errorf("replacement widget %q value outside declared range", widget.ID)

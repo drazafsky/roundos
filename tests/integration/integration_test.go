@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,11 +215,16 @@ func TestClockTextRequestAndResult(t *testing.T) {
 	if requested.TextRequest == nil || requested.TextRequest.ID != "clock-label" || requested.TextRequest.Secure {
 		t.Fatalf("request %+v", requested.TextRequest)
 	}
-	if !mgr.TextResult(wire.ClockID, wire.TextResult{ID: "clock-label", Value: "HELLO"}) {
-		t.Fatal("text result not delivered")
-	}
-	updated := get(t, events, wire.ClockID, "view", 5*time.Second)
-	if updated.View.Hint != "HELLO" {
-		t.Fatalf("clock did not receive input: %+v", updated.View)
+	for _, label := range []string{"HELLO", strings.Repeat("x", 256), strings.Repeat("é", 256), strings.Repeat("🌍", 256)} {
+		if !mgr.TextResult(wire.ClockID, wire.TextResult{ID: "clock-label", Value: label}) {
+			t.Fatal("text result not delivered")
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			updated := get(t, events, wire.ClockID, "view", time.Until(deadline))
+			if updated.View.Hint == label && updated.View.Screens[0].Subtitle == label {
+				break
+			}
+		}
 	}
 }

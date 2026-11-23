@@ -1,5 +1,9 @@
 package wire
 
+// MaxSubtitleBytes accommodates all 256 Unicode runes accepted by the shell
+// editor, including four-byte characters. Legacy root hints mirror subtitles.
+const MaxSubtitleBytes = 1024
+
 // Widget is a shell-rendered, semantically themed control. Applications send
 // values and actions; the shell owns positioning, hit-testing and focus.
 // Widget IDs must remain stable across view updates to preserve focus.
@@ -43,6 +47,23 @@ type Screen struct {
 	Hero     string   `json:"hero,omitempty"`
 	Subtitle string   `json:"subtitle,omitempty"`
 	Widgets  []Widget `json:"widgets,omitempty"`
+}
+
+// RootHeader retains the scalar presentation used by legacy shells and
+// observers without duplicating it in application Go code.
+func RootHeader(view View) View {
+	if len(view.Screens) == 0 {
+		return view
+	}
+	root := view.Screens[0]
+	view.Title, view.Primary, view.Hint = root.Title, root.Hero, root.Subtitle
+	for _, widget := range root.Widgets {
+		if widget.Kind == "button" && widget.Variant == "primary" && widget.Action != "" {
+			view.ButtonLabel, view.ButtonAction = widget.Label, widget.Action
+			break
+		}
+	}
+	return view
 }
 
 // CopyView prevents app-owned slices from altering the transport's diff

@@ -39,10 +39,13 @@ type ActionEvent struct {
 	Name  string
 	Delta int
 }
-type intRange struct{ min, max int }
 
 const maxDialogContracts = 1024
 
+type intRange struct {
+	min, max               int
+	minBinding, maxBinding string
+}
 type boolSource struct {
 	binding string
 	literal bool
@@ -123,10 +126,16 @@ func NewForApp(p Publisher, data []byte, expectedAppID string) (*Runtime, error)
 				if w.OnCommit != "" {
 					rg := intRange{}
 					if w.Type == "timePicker" {
-						rg = intRange{0, 1439}
-					} else if w.Min != nil && w.Max != nil {
-						rg = intRange{*w.Min, *w.Max}
+						rg = intRange{min: 0, max: 1439}
+					} else {
+						if w.Min != nil {
+							rg.min = *w.Min
+						}
+						if w.Max != nil {
+							rg.max = *w.Max
+						}
 					}
+					rg.minBinding, rg.maxBinding = w.MinBinding, w.MaxBinding
 					if prev, ok := r.intActions[w.OnCommit]; ok && prev != rg {
 						return nil, fmt.Errorf("ambiguous v7 integer action %q: distinct value ranges", w.OnCommit)
 					}
@@ -402,6 +411,22 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 		if ev.UI != nil && ev.UI.Int != nil {
 			ev.Delta = *ev.UI.Int
 		}
+		if rg.minBinding != "" || rg.maxBinding != "" {
+			found := false
+			if lastView != nil {
+				for _, screen := range lastView.Screens {
+					for _, widget := range screen.Widgets {
+						if widget.Action == ev.Action {
+							rg.min, rg.max, found = widget.Min, widget.Max, true
+							break
+						}
+					}
+				}
+			}
+			if !found {
+				return true, r.rejectInput(fmt.Errorf("integer action has no published range"))
+			}
+		}
 		if ev.Delta < rg.min || ev.Delta > rg.max {
 			return true, r.rejectInput(fmt.Errorf("RUI action %q value outside declared range", ev.Action))
 		}
@@ -437,6 +462,16 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 // retain dirty state for retry; reopening a dismissed dialog can publish a
 // dialog-free transition first. Concurrent invalidations survive this Flush.
 func (r *Runtime) Flush() error {
+	return r.flush(false)
+}
+
+// PublishInitial publishes one validated readiness snapshot even while hidden.
+// Later hidden updates remain deferred until visibility is restored.
+func (r *Runtime) PublishInitial() error {
+	return r.flush(true)
+}
+
+func (r *Runtime) flush(initial bool) error {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
 	r.mu.Lock()
@@ -444,7 +479,7 @@ func (r *Runtime) Flush() error {
 		r.mu.Unlock()
 		return fmt.Errorf("RUI registrations must be validated before Flush")
 	}
-	if !r.visible || !r.dirty {
+	if initial && r.lastView != nil || !initial && !r.visible || !r.dirty {
 		r.mu.Unlock()
 		return nil
 	}

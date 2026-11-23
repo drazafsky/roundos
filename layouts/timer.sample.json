@@ -1,8 +1,7 @@
 {
   "timer.display": "04:38",
-  "timer.status": "COUNTING DOWN",
+  "timer.status": "RUNNING IN BACKGROUND",
   "timer.toggleLabel": "PAUSE",
-  "timer.progress": 72,
-  "timer.minutes": 5,
+  "timer.minutes": 4,
   "timer.stopped": false
 }

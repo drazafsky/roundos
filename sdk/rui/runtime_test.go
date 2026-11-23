@@ -255,7 +255,7 @@ func TestErrorRecoveryBoundsAndConcurrentInvalidation(t *testing.T) {
 	if err := r.Flush(); err != nil || pub.count() != 1 {
 		t.Fatalf("flush retry %v count %d", err, pub.count())
 	}
-	txt = strings.Repeat("x", 241)
+	txt = strings.Repeat("x", 1025)
 	if err := r.Invalidate("demo.subtitle"); err != nil {
 		t.Fatal(err)
 	}

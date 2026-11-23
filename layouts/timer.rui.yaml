@@ -3,54 +3,63 @@ application:
   id: org.roundos.timer
 screens:
   - id: timer.root
-    title: Timer
+    title: TIMER
     layout: hero_list
     hero: { bind: timer.display }
     subtitle: { bind: timer.status }
     groups:
-      - id: actions
+      - id: controls
         widgets:
           - id: timer.toggle
             type: button
-            variant: primary
             label: { bind: timer.toggleLabel }
-            onPress: timer.toggle
-          - id: timer.durationLink
+            variant: primary
+            onPress: toggle
+          - id: timer.duration.link
             type: button
-            label: Duration
+            label: DURATION
             navigate: timer.duration
-          - id: timer.progress
-            type: progress
-            label: Remaining
-            value: { bind: timer.progress }
-            min: 0
-            max: 100
   - id: timer.duration
-    title: Duration
-    layout: form
+    title: DURATION
+    layout: list
+    subtitle: STOP TIMER TO EDIT
     groups:
-      - id: duration
-        title: Set Duration
+      - id: controls
         widgets:
           - id: timer.minutes
-            type: numberPicker
-            label: Minutes
+            type: slider
+            label: MINUTES
             value: { bind: timer.minutes }
-            min: 1
+            min: 0
             max: 999
             step: 1
             enabledWhen: { bind: timer.stopped }
-            onCommit: timer.setMinutes
+            onCommit: set_minutes
+          - id: timer.picker
+            type: numberPicker
+            label: SET MINUTES
+            value: { bind: timer.minutes }
+            min: 0
+            max: 999
+            step: 1
+            enabledWhen: { bind: timer.stopped }
+            onCommit: set_minutes
           - id: timer.reset
             type: button
-            label: Reset to Five
-            onPress: timer.reset
+            label: RESET TIMER
+            onPress: request_reset
+          - id: timer.progress
+            type: progress
+            label: TIME REMAINING
+            value: { bind: timer.minutes }
+            min: 0
+            max: 999
 dialogs:
-  - id: timer.confirmReset
-    title: Reset timer?
-    body: "This will clear the current countdown."
-    confirmLabel: RESET
+  - id: timer-reset
+    title: RESET TIMER?
+    body: THIS WILL DISCARD TIME
+    confirmLabel: CONFIRM
     cancelLabel: CANCEL
-    onConfirm: timer.reset
-    onCancel: timer.cancelReset
+    onConfirm: confirm_reset
+    onCancel: cancel_reset
     destructive: true

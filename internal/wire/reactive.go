@@ -254,6 +254,7 @@ func ApplyProperties(current View, updates []PropertyUpdate) (View, error) {
 				str = &next.Secondary
 			case "hint":
 				str = &next.Hint
+				limit = MaxSubtitleBytes
 			case "button_label":
 				str = &next.ButtonLabel
 			}
@@ -278,6 +279,7 @@ func ApplyProperties(current View, updates []PropertyUpdate) (View, error) {
 					limit = 80
 				case "subtitle":
 					str = &screen.Subtitle
+					limit = MaxSubtitleBytes
 				}
 			} else {
 				var widget *Widget

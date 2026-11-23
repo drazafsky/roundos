@@ -623,6 +623,20 @@ func DrawInto(im *image.RGBA, m *Model, now time.Time) {
 			if m.SwitcherFocus == i {
 				outlineRect(im, 104, y-21, 376, y+43, accent)
 			}
+			appIndex := -1
+			switch i {
+			case 0, 1:
+				appIndex = i
+			case 6:
+				appIndex = 2
+			}
+			if appIndex >= 0 {
+				foreground := grey
+				if m.SwitcherFocus == i {
+					foreground = accent
+				}
+				drawAppIcon(im, m.AppCards[appIndex], 132, y+7, 15, foreground)
+			}
 			textTheme(im, 240, y-8, 2, items[i], white, true, m.Appearance)
 			status := "SHELL ACTION"
 			if i == 0 || i == 1 || i >= 7 {

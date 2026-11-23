@@ -17,14 +17,18 @@ func drawCarousel(im *image.RGBA, m *Model, now time.Time) {
 	for _, entry := range []struct{ x, idx int }{{63, (focus + n - 1) % n}, {417, (focus + 1) % n}} {
 		app := m.AppCards[entry.idx]
 		rect(im, entry.x-33, 211, entry.x+33, 296, p.Surface)
-		textTheme(im, entry.x, 237, 2, app.Icon, p.SecondaryText, true, m.Appearance)
+		if !drawAppIcon(im, app, entry.x, 239, 18, p.SecondaryText) {
+			textTheme(im, entry.x, 237, 2, app.Icon, p.SecondaryText, true, m.Appearance)
+		}
 		textTheme(im, entry.x, 263, 1, "APP", p.SecondaryText, true, m.Appearance)
 	}
 	app := m.AppCards[focus]
 	rect(im, 120, 172, 360, 349, p.Surface)
 	outlineRect(im, 118, 170, 362, 351, p.Focus)
 	disc(im, 240, 238, 42, p.Selected)
-	textTheme(im, 240, 227, 3, app.Icon, p.Accent, true, m.Appearance)
+	if !drawAppIcon(im, app, 240, 238, 28, p.Accent) {
+		textTheme(im, 240, 227, 3, app.Icon, p.Accent, true, m.Appearance)
+	}
 	textTheme(im, 240, 294, 3, app.Title, p.PrimaryText, true, m.Appearance)
 	detail := "SELECT TO OPEN"
 	if focus == 0 {

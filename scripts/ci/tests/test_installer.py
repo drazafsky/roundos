@@ -1,5 +1,6 @@
 """Exercise installer identity checks before any installation can occur."""
 import os
+import fcntl
 import hashlib
 from pathlib import Path
 import shutil
@@ -21,6 +22,7 @@ class InstallerIdentityTests(unittest.TestCase):
         script = script.replace('/etc/systemd/system/roundos.service', str(self.root / 'installed.service'))
         script = script.replace('/etc/systemd/system', str(self.root / 'installed-units'))
         script = script.replace('/opt/roundos', str(self.root / 'managed'))
+        script = script.replace('/var/lib/roundos', str(self.root / 'state'))
         (self.root / 'scripts/install-release.sh').write_text(script)
         (self.root / 'systemd').mkdir()
         for name in ('roundos.service', 'roundos-update.service', 'roundos-update-recover.service'):
@@ -231,12 +233,31 @@ class InstallerIdentityTests(unittest.TestCase):
         installed = self.root / 'installed.service'
         original = (self.root / 'systemd/roundos.service').read_bytes()
         installed.write_bytes(original)
-        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1')
+        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1',
+                                    ROUNDOS_UPDATE_STAGE=str(self.root / 'managed/releases' / ('.install-update-' + 'a' * 32)))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(installed.read_bytes(), original)
         self.assertFalse((self.root / 'managed/update-controller').exists())
         self.assertFalse((self.root / 'installed-units/roundos-update.service').exists())
         self.assertEqual(self.systemctl_calls.read_text().splitlines(), ['is-active roundos.service'])
+
+    def test_manual_install_obeys_the_managed_transaction_lock(self):
+        self.complete_install_fixture()
+        state = self.root / 'state/shell-data'
+        state.mkdir(parents=True)
+        with (state / 'update-install.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.run_installer()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Another update installer is running', result.stderr)
+        self.assertFalse((self.root / 'managed/releases' / VERSION).exists())
+
+    def test_previous_v1_controller_environment_still_installs(self):
+        self.complete_install_fixture()
+        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / 'managed/current').resolve(), self.root / 'managed/releases' / VERSION)
+        self.assertFalse((self.root / 'managed/update-controller').exists())
 
 
 if __name__ == '__main__':

@@ -7,6 +7,24 @@ UNIT=roundos.service
 DM=lightdm.service
 ROOT=/opt/roundos
 STAMP=/var/lib/roundos/desktop-before-roundos
+update_lock_held=0
+lock_update() {
+  if [ "$update_lock_held" -eq 1 ]; then return; fi
+  state=${STAMP%/*}
+  for dir in "$state" "$state/shell-data"; do
+    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+      echo 'Refusing untrusted update state directory' >&2; exit 1
+    fi
+  done
+  mkdir -p -m 0700 "$state/shell-data"
+  lock="$state/shell-data/update-install.lock"
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    echo 'Refusing untrusted update lock' >&2; exit 1
+  fi
+  exec 9<> "$lock"
+  if ! flock -n 9; then echo 'Another update installer is running' >&2; exit 1; fi
+  update_lock_held=1
+}
 usage() { echo 'Usage: roundosctl {status|verify|activate|disable|rollback|logs}' >&2; exit 2; }
 status() {
   printf 'Release: '; readlink -f "$ROOT/current" 2>/dev/null || echo unavailable
@@ -114,7 +132,7 @@ recover_desktop() {
   rm -f "$STAMP"
 }
 activate() {
-  need_root;need_ssh;verify
+  need_root;need_ssh;lock_update;verify
   check_startup_protocol "$(readlink -f "$ROOT/current")"
   # An active notify service has completed initialization, including on retry.
   if systemctl is-active --quiet "$UNIT";then echo 'RoundOS is already ready';return;fi
@@ -138,12 +156,12 @@ activate() {
   echo 'RoundOS ready and enabled for future boots.'
 }
 disable() {
-  need_root;need_ssh
+  need_root;need_ssh;lock_update
   recover_desktop
   echo 'RoundOS disabled; prior recorded desktop state restored.'
 }
 rollback() {
-  need_root; need_ssh
+  need_root; need_ssh; lock_update
   old=$(readlink -f "$ROOT/previous" 2>/dev/null || true)
   case "$old" in
     "$ROOT"/releases/*) [ -d "$old" ] || { echo 'Rollback release directory missing' >&2;exit 1;};;

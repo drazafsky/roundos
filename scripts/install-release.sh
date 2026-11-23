@@ -37,6 +37,20 @@ for update_unit in roundos.service roundos-update.service roundos-update-recover
     echo "Missing or untrusted service template: $update_unit" >&2; exit 1
   fi
 done
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
+  for dir in /var/lib/roundos /var/lib/roundos/shell-data; do
+    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+      echo "Refusing untrusted update state directory: $dir" >&2; exit 1
+    fi
+  done
+  mkdir -p -m 0700 /var/lib/roundos/shell-data
+  lock=/var/lib/roundos/shell-data/update-install.lock
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    echo 'Refusing untrusted update lock' >&2; exit 1
+  fi
+  exec 9<> "$lock"
+  if ! flock -n 9; then echo 'Another update installer is running' >&2; exit 1; fi
+fi
 unit=/etc/systemd/system/roundos.service
 if [ -f "$unit" ] && ! cmp -s "$ROOT/systemd/roundos.service" "$unit"; then
   # Permit a managed template upgrade, including the original unmodified
@@ -127,7 +141,18 @@ fi
 if [ ! -e /etc/roundos/gestures.json ]; then
   install -o root -g root -m 0644 "$ROOT/config/gestures.example.json" /etc/roundos/gestures.json
 fi
-stage=$(mktemp -d "$RELEASES/.install.XXXXXXXX")
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" = 1 ] && [ -n "${ROUNDOS_UPDATE_STAGE:-}" ]; then
+  stage=${ROUNDOS_UPDATE_STAGE:-}
+  case "$stage" in "$RELEASES"/.install-update-*) stage_id=${stage##*/.install-update-};;
+    *) echo 'Missing or untrusted managed installer stage' >&2; exit 1;; esac
+  case "$stage_id" in ''|*[!0-9a-f]*) echo 'Invalid installer stage ID' >&2; exit 1;; esac
+  [ "${#stage_id}" -eq 32 ] || { echo 'Invalid installer stage ID length' >&2; exit 1; }
+  mkdir -m 0700 "$stage"
+else
+  # Existing roundos-update-v1 controllers do not pass an explicit stage path.
+  # Keep their installer contract; new controllers always record the path.
+  stage=$(mktemp -d "$RELEASES/.install.XXXXXXXX")
+fi
 cleanup() { if [ -n "${stage:-}" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi; }
 trap cleanup EXIT HUP INT TERM
 install -d -o root -g root -m 0755 "$stage/bin"

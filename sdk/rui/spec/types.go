@@ -62,6 +62,8 @@ type Widget struct {
 	Checked     *Value[bool]   `json:"checked,omitempty"`
 	Min         *int           `json:"min,omitempty"`
 	Max         *int           `json:"max,omitempty"`
+	MinBinding  string         `json:"minBinding,omitempty"`
+	MaxBinding  string         `json:"maxBinding,omitempty"`
 	Step        *int           `json:"step,omitempty"`
 	Wrap        *bool          `json:"wrap,omitempty"`
 	EnabledWhen *Value[bool]   `json:"enabledWhen,omitempty"`

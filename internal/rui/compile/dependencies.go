@@ -41,6 +41,12 @@ func Dependencies(doc *spec.Document) map[string][]bundle.Dependency {
 				text(w.Label, "label", at)
 				text(w.Detail, "detail", at)
 				integer(w.Value, "value", at)
+				if w.MinBinding != "" {
+					add(w.MinBinding, "min", at)
+				}
+				if w.MaxBinding != "" {
+					add(w.MaxBinding, "max", at)
+				}
 				boolean(w.Checked, "checked", at)
 				boolean(w.EnabledWhen, "enabled", at)
 				boolean(w.VisibleWhen, "visible", at)

@@ -4,6 +4,7 @@ package validate
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -56,18 +57,25 @@ func boolWhen(v *spec.Value[bool], name string) error {
 }
 func intRange(w spec.Widget) (int, int, error) {
 	if w.Type == "timePicker" {
-		if w.Min != nil || w.Max != nil {
+		if w.Min != nil || w.Max != nil || w.MinBinding != "" || w.MaxBinding != "" {
 			return 0, 0, bad(w.Pos, "timePicker uses the fixed 0..1439 minute-of-day range")
 		}
 		return 0, 1439, nil
 	}
-	if w.Min == nil || w.Max == nil {
+	if (w.Min == nil) == (w.MinBinding == "") || (w.Max == nil) == (w.MaxBinding == "") {
 		return 0, 0, bad(w.Pos, "%s requires min and max", w.Type)
 	}
-	if *w.Max <= *w.Min {
+	if w.Min != nil && w.Max != nil && *w.Max <= *w.Min {
 		return 0, 0, bad(w.Pos, "max must exceed min")
 	}
-	return *w.Min, *w.Max, nil
+	low, high := math.MinInt32, math.MaxInt32
+	if w.Min != nil {
+		low = *w.Min
+	}
+	if w.Max != nil {
+		high = *w.Max
+	}
+	return low, high, nil
 }
 func requireAction(name string, p spec.Pos) error { return identifier(name, p, "action") }
 func oneOfVariant(s string, p spec.Pos) error {
@@ -258,12 +266,19 @@ func Validate(d *spec.Document) (*spec.Manifest, error) {
 				if err := addInt(w.Value); err != nil {
 					return nil, err
 				}
+				for _, key := range []string{w.MinBinding, w.MaxBinding} {
+					if key != "" {
+						if err := addInt(&spec.Value[int]{Bound: true, Binding: key, Present: true, Pos: w.Pos}); err != nil {
+							return nil, err
+						}
+					}
+				}
 				if err := addBool(w.Checked); err != nil {
 					return nil, err
 				}
 				switch w.Type {
 				case "button", "listItem":
-					if w.Value != nil || w.Checked != nil || w.Min != nil || w.Max != nil || w.Step != nil || w.Wrap != nil || w.OnChange != "" || w.OnCommit != "" {
+					if w.Value != nil || w.Checked != nil || w.Min != nil || w.Max != nil || w.MinBinding != "" || w.MaxBinding != "" || w.Step != nil || w.Wrap != nil || w.OnChange != "" || w.OnCommit != "" {
 						return nil, bad(w.Pos, "%s contains unsupported value/handler properties", w.Type)
 					}
 					if w.Navigate == "" && w.OnPress == "" {
@@ -273,7 +288,7 @@ func Validate(d *spec.Document) (*spec.Manifest, error) {
 					if w.Checked == nil || w.OnChange == "" {
 						return nil, bad(w.Pos, "toggle requires checked and onChange")
 					}
-					if w.Value != nil || w.Min != nil || w.Max != nil || w.Step != nil || w.Wrap != nil || w.OnPress != "" || w.OnCommit != "" || w.Navigate != "" {
+					if w.Value != nil || w.Min != nil || w.Max != nil || w.MinBinding != "" || w.MaxBinding != "" || w.Step != nil || w.Wrap != nil || w.OnPress != "" || w.OnCommit != "" || w.Navigate != "" {
 						return nil, bad(w.Pos, "toggle has incompatible properties")
 					}
 				case "slider", "numberPicker", "timePicker", "datePicker", "progress":
@@ -306,7 +321,7 @@ func Validate(d *spec.Document) (*spec.Manifest, error) {
 						}
 					}
 				case "label":
-					if w.Value != nil || w.Checked != nil || w.Min != nil || w.Max != nil || w.Step != nil || w.Wrap != nil || w.OnPress != "" || w.OnChange != "" || w.OnCommit != "" || w.Navigate != "" {
+					if w.Value != nil || w.Checked != nil || w.Min != nil || w.Max != nil || w.MinBinding != "" || w.MaxBinding != "" || w.Step != nil || w.Wrap != nil || w.OnPress != "" || w.OnChange != "" || w.OnCommit != "" || w.Navigate != "" {
 						return nil, bad(w.Pos, "label is noninteractive text")
 					}
 				default:

@@ -3,6 +3,7 @@ package rui
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"unicode/utf8"
 
@@ -38,6 +39,9 @@ func evaluateBinding(name string, b binding) (value boundValue, err error) {
 		}
 	case spec.IntBinding:
 		value.integer = b.integer()
+		if value.integer < math.MinInt32 || value.integer > math.MaxInt32 {
+			return value, &BindingError{Key: name, Reason: "integer exceeds portable range"}
+		}
 	case spec.BoolBinding:
 		value.boolean = b.boolean()
 	default:
@@ -62,6 +66,9 @@ func validateBindingValue(f *bundle.File, key string, value boundValue) error {
 		}
 		if value.typ == spec.IntBinding {
 			w := f.Document.Screens[dep.Screen].Groups[dep.Group].Widgets[dep.Widget]
+			if dep.Property == "min" || dep.Property == "max" || w.MinBinding != "" || w.MaxBinding != "" {
+				continue
+			}
 			low, high := 0, 1439
 			if w.Type != "timePicker" {
 				low, high = *w.Min, *w.Max
@@ -112,7 +119,65 @@ func evaluateDirty(f *bundle.File, bindings map[string]binding, previous map[str
 			}
 		}
 	}
+	if err := validateResolvedRanges(f, previous, values, failed); err != nil {
+		errs = append(errs, err)
+	}
 	return values, affected, failed, errors.Join(errs...)
+}
+
+// Range/value bindings form one consistency unit. Reject that unit together
+// while retaining unrelated valid updates. Repeating reaches a fixed point
+// when a shared binding participates in more than one control's range.
+func validateResolvedRanges(f *bundle.File, previous, values map[string]boundValue, failed map[string]bool) error {
+	var errs []error
+	for {
+		changed := false
+		for _, screen := range f.Document.Screens {
+			for _, group := range screen.Groups {
+				for _, w := range group.Widgets {
+					if w.Value == nil || (w.MinBinding == "" && w.MaxBinding == "") {
+						continue
+					}
+					states := frozenSnapshot(values)
+					low, high, err := states.widgetRange(w)
+					value, valueErr := states.integer(*w.Value)
+					if err != nil || valueErr != nil {
+						continue
+					}
+					if low < high && value >= low && value <= high {
+						continue
+					}
+					keys := []string{w.MinBinding, w.MaxBinding}
+					if w.Value.Bound {
+						keys = append(keys, w.Value.Binding)
+					}
+					for _, key := range keys {
+						if key == "" {
+							continue
+						}
+						if !failed[key] {
+							errs = append(errs, &BindingError{Key: key, Reason: "inconsistent range or value"})
+						}
+						failed[key] = true
+						before, hadBefore := previous[key]
+						current, hasCurrent := values[key]
+						if hadBefore {
+							if !hasCurrent || current != before {
+								values[key] = before
+								changed = true
+							}
+						} else if hasCurrent {
+							delete(values, key)
+							changed = true
+						}
+					}
+				}
+			}
+		}
+		if !changed {
+			return errors.Join(errs...)
+		}
+	}
 }
 
 func frozenSnapshot(values map[string]boundValue) stateSnapshot {

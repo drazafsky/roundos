@@ -398,11 +398,11 @@ func decodeWidget(n *node) (spec.Widget, error) {
 	if e != nil {
 		return w, e
 	}
-	w.Min, e = optIntLit(n.get("min"))
+	w.Min, w.MinBinding, e = rangeValue(n.get("min"))
 	if e != nil {
 		return w, e
 	}
-	w.Max, e = optIntLit(n.get("max"))
+	w.Max, w.MaxBinding, e = rangeValue(n.get("max"))
 	if e != nil {
 		return w, e
 	}
@@ -477,6 +477,17 @@ func decodeDialog(n *node) (spec.Dialog, error) {
 		}
 	}
 	return d, nil
+}
+
+func rangeValue(n *node) (*int, string, error) {
+	v, err := optInt(n)
+	if err != nil || v == nil {
+		return nil, "", err
+	}
+	if v.Bound {
+		return nil, v.Binding, nil
+	}
+	return &v.Literal, "", nil
 }
 
 // ParseFile is intentionally absent from this parser. M2 tooling will decide

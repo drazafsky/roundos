@@ -203,6 +203,12 @@ func View(f *bundle.File, s *State) (wire.View, error) {
 				if w.Max != nil {
 					item.Max = *w.Max
 				}
+				if w.MinBinding != "" {
+					item.Min = s.integer(spec.Value[int]{Bound: true, Binding: w.MinBinding}, 0)
+				}
+				if w.MaxBinding != "" {
+					item.Max = s.integer(spec.Value[int]{Bound: true, Binding: w.MaxBinding}, item.Min+1)
+				}
 				if w.Type == "timePicker" {
 					item.Min = 0
 					item.Max = 1439
@@ -233,6 +239,7 @@ func View(f *bundle.File, s *State) (wire.View, error) {
 		}
 		v.Screens = append(v.Screens, ws)
 	}
+	v = wire.RootHeader(v)
 	if err := wire.ValidateView(v); err != nil {
 		return wire.View{}, err
 	}

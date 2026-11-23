@@ -3,44 +3,161 @@ application:
   id: org.roundos.clock
 screens:
   - id: clock.root
-    title: Clock
+    title: CLOCK
     layout: hero_list
     hero: { bind: clock.display }
     subtitle: { bind: clock.caption }
     groups:
-      - id: actions
+      - id: controls
         widgets:
-          - id: clock.editLabel
+          - id: clock.label
             type: button
+            label: EDIT LABEL
             variant: primary
-            label: Edit Label
-            onPress: clock.requestLabelEdit
+            onPress: edit_label
           - id: clock.options
             type: button
-            label: Options
-            navigate: clock.settings
-  - id: clock.settings
-    title: Clock Options
-    layout: form
+            label: OPTIONS
+            navigate: clock.options
+  - id: clock.options
+    title: CLOCK OPTIONS
+    layout: list
     groups:
-      - id: format
-        title: Time Format
+      - id: controls
         widgets:
-          - id: clock.use24Hour
+          - id: clock.24hour
             type: toggle
-            label: 24-hour Clock
+            label: 24-HOUR CLOCK
             checked: { bind: clock.use24Hour }
-            onChange: clock.setUse24Hour
-          - id: clock.about
+            onChange: toggle_24hour
+          - id: clock.details
+            type: button
+            label: PICKER EXAMPLES
+            navigate: clock.details
+          - id: clock.gallery
+            type: button
+            label: WIDGET GALLERY
+            navigate: clock.gallery
+          - id: clock.help
             type: listItem
-            label: About Clock
+            label: HELP
+            detail: HOW TO USE THE CLOCK
+            onPress: clock_help
+          - id: clock.about
+            type: button
+            label: ABOUT
             navigate: clock.about
-  - id: clock.about
-    title: About Clock
-    layout: detail
+  - id: clock.details
+    title: DETAILS
+    layout: list
     groups:
-      - id: about
+      - id: controls
         widgets:
-          - id: clock.description
+          - id: clock.alarm
+            type: timePicker
+            label: TIME EXAMPLE
+            value: { bind: clock.alarmMinute }
+            step: 5
+            wrap: true
+            onCommit: set_alarm_time
+          - id: clock.snooze
+            type: numberPicker
+            label: NUMBER EXAMPLE
+            value: { bind: clock.snoozeMinutes }
+            min: 1
+            max: 30
+            step: 1
+            onCommit: set_snooze
+          - id: clock.date
+            type: datePicker
+            label: DATE EXAMPLE
+            value: { bind: clock.exampleDate }
+            min: { bind: clock.minDate }
+            max: { bind: clock.maxDate }
+            step: 1
+            onCommit: set_date
+  - id: clock.gallery
+    title: WIDGET GALLERY
+    layout: list
+    subtitle: SCROLL TO EXPLORE
+    groups:
+      - id: controls
+        widgets:
+          - id: gallery.a
+            type: listItem
+            label: GALLERY ITEM A
+            detail: SELECT TO NOTIFY
+            onPress: demo_a
+          - id: gallery.b
+            type: listItem
+            label: GALLERY ITEM B
+            detail: SELECT TO NOTIFY
+            onPress: demo_b
+          - id: gallery.c
+            type: listItem
+            label: GALLERY ITEM C
+            detail: SELECT TO NOTIFY
+            onPress: demo_c
+          - id: gallery.d
+            type: listItem
+            label: GALLERY ITEM D
+            detail: SELECT TO NOTIFY
+            onPress: demo_d
+          - id: gallery.e
+            type: listItem
+            label: GALLERY ITEM E
+            detail: SELECT TO NOTIFY
+            onPress: demo_e
+          - id: gallery.f
+            type: listItem
+            label: GALLERY ITEM F
+            detail: SELECT TO NOTIFY
+            onPress: demo_f
+          - id: gallery.g
+            type: listItem
+            label: GALLERY ITEM G
+            detail: SELECT TO NOTIFY
+            onPress: demo_g
+          - id: gallery.h
+            type: listItem
+            label: GALLERY ITEM H
+            detail: SELECT TO NOTIFY
+            onPress: demo_h
+          - id: gallery.i
+            type: listItem
+            label: GALLERY ITEM I
+            detail: SELECT TO NOTIFY
+            onPress: demo_i
+          - id: gallery.j
+            type: listItem
+            label: GALLERY ITEM J
+            detail: SELECT TO NOTIFY
+            onPress: demo_j
+          - id: gallery.k
+            type: listItem
+            label: GALLERY ITEM K
+            detail: SELECT TO NOTIFY
+            onPress: demo_k
+          - id: gallery.l
+            type: listItem
+            label: GALLERY ITEM L
+            detail: SELECT TO NOTIFY
+            onPress: demo_l
+  - id: clock.about
+    title: ABOUT
+    layout: list
+    subtitle: LOCAL CLOCK
+    groups:
+      - id: controls
+        widgets:
+          - id: clock.local
             type: label
-            label: RoundOS Local Clock
+            label: LOCAL
+dialogs:
+  - id: help
+    title: CLOCK HELP
+    body: TOUCH OR ROTATE
+    confirmLabel: CONFIRM
+    cancelLabel: CANCEL
+    onConfirm: close_help
+    onCancel: close_help

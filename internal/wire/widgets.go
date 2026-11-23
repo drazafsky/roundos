@@ -45,6 +45,23 @@ type Screen struct {
 	Widgets  []Widget `json:"widgets,omitempty"`
 }
 
+// RootHeader retains the scalar presentation used by legacy shells and
+// observers without duplicating it in application Go code.
+func RootHeader(view View) View {
+	if len(view.Screens) == 0 {
+		return view
+	}
+	root := view.Screens[0]
+	view.Title, view.Primary, view.Hint = root.Title, root.Hero, root.Subtitle
+	for _, widget := range root.Widgets {
+		if widget.Kind == "button" && widget.Variant == "primary" && widget.Action != "" {
+			view.ButtonLabel, view.ButtonAction = widget.Label, widget.Action
+			break
+		}
+	}
+	return view
+}
+
 // CopyView prevents app-owned slices from altering the transport's diff
 // baseline or the asynchronous shell renderer's immutable snapshots.
 func CopyView(v View) View {

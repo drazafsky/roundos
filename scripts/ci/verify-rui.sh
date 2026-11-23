@@ -16,6 +16,10 @@ for layout in layouts/*.rui.yaml; do
   cmp "$work/$name.rui.bin" "$work/$name-again.rui.bin"
 done
 
+# Built-in app presentation must match its checked-in embedded artifact.
+cmp "$work/clock.rui.bin" layouts/clock.rui.bin
+cmp "$work/timer.rui.bin" layouts/timer.rui.bin
+
 # M3 is an opt-in SDK example. Verify its checked-in embedded bundle and both
 # build targets without installing the demo or starting a shell/service.
 "$work/roundui" validate examples/rui-demo/layout.rui.yaml

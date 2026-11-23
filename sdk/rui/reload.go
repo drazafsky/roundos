@@ -80,6 +80,19 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 			return fmt.Errorf("replacement needs unavailable action %q (%s)", act.Name, act.ValueType)
 		}
 	}
+	// Legacy input has no layout revision. Keep the meaning of a retained
+	// toggle action and dialog ID stable so queued input cannot acquire a new
+	// source, or dismiss an old dialog while leaving its replacement hidden.
+	for action, source := range candidate.boolActions {
+		if previous, ok := r.boolActions[action]; ok && previous != source {
+			return fmt.Errorf("replacement remaps boolean action %q", action)
+		}
+	}
+	for id, actions := range candidate.dialogActions {
+		if previous, ok := r.dialogActions[id]; ok && previous != actions {
+			return fmt.Errorf("replacement remaps dialog actions %q", id)
+		}
+	}
 	if _, ok := candidate.dialogActions[dialog]; !ok {
 		dialog = ""
 	}

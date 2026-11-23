@@ -78,6 +78,9 @@ manual supervisor launch; normal inherited environments are filtered out.
 value and frame-budget checks before replacing its tree. Bad candidates leave
 the runtime and visible UI intact. Getter panics during staging become
 sanitized errors. Existing registrations remain available for future layouts.
+Retained toggle actions must keep their checked binding, and retained dialog
+IDs must keep their confirm/cancel actions: legacy input has no layout revision
+with which to distinguish queued events from a remapped control.
 Hidden widget properties and inactive dialogs are checked too. Candidate
 publication must succeed before its tree and actions become active; replacement
 also publishes one snapshot while hidden so the next foreground view agrees.

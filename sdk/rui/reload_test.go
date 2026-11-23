@@ -43,6 +43,7 @@ func TestReplacementIsStagedWithoutActionsOrStateLoss(t *testing.T) {
 		{"identity", "org.example.rui.demo", "org.example.other"},
 		{"binding", "demo.subtitle", "demo.unregistered"},
 		{"action", "onPress: demo.increment", "onPress: demo.unregistered"},
+		{"dialog actions", "onConfirm: demo.confirmReset", "onConfirm: demo.cancelReset"},
 		{"dynamic bounds", "max: 99", "max: 4"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -79,6 +80,37 @@ func TestReplacementIsStagedWithoutActionsOrStateLoss(t *testing.T) {
 	}
 	if _, err := r.Dispatch(app.Event{Type: "input", Action: "demo.increment"}); err != nil || count != 6 {
 		t.Fatal("registered handler was lost", err)
+	}
+}
+
+func TestReplacementRejectsRemappingRegisteredToggleSource(t *testing.T) {
+	addGuard := func(source []byte) []byte {
+		return bytes.Replace(source, []byte("label: Add One"), []byte("label: Add One\n            visibleWhen: { bind: demo.otherEnabled }"), 1)
+	}
+	data := replacement(t, addGuard)
+	pub := &capture{}
+	r, err := NewForApp(pub, data, "org.example.rui.demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := true
+	if err := r.BindBool("demo.otherEnabled", func() bool { return other }); err != nil {
+		t.Fatal(err)
+	}
+	count, enabled, title := 5, true, "Demo"
+	registerDemo(t, r, &count, &enabled, &title)
+	r.Dispatch(app.Event{Type: "visibility", Visible: true})
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	changed := replacement(t, func(source []byte) []byte {
+		return bytes.Replace(addGuard(source), []byte("checked: { bind: demo.enabled }"), []byte("checked: { bind: demo.otherEnabled }"), 1)
+	})
+	if err := r.Replace(changed); err == nil || !strings.Contains(err.Error(), "remaps boolean") {
+		t.Fatal("registered source remap accepted", err)
+	}
+	if _, err := r.Dispatch(app.Event{Type: "input", Action: "demo.setEnabled"}); err != nil || enabled || !other {
+		t.Fatal("queued legacy toggle lost its original meaning", err)
 	}
 }
 

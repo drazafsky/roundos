@@ -29,13 +29,17 @@ const (
 )
 
 type Command struct {
+	ID          uint64
 	Kind        CommandKind
 	Preferences Preferences
 	Version     string
 }
 
 type Status struct {
+	LastCommandID  uint64 // identifies the command acknowledged by this snapshot
+	CommandErr     error  // retained outcome of LastCommandID, independent of later checks
 	Preferences    Preferences
+	PersistenceErr error // unresolved state write failure, including startup recovery
 	IgnoredVersion string
 	Busy           bool
 	LastAttempt    time.Time
@@ -172,6 +176,7 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 			status.NextAutomatic = next
 			wake = clock.After(max(0, next.Sub(now)))
 		}
+		status.PersistenceErr = store.PersistenceError()
 		s.publish(status)
 		select {
 		case <-ctx.Done():
@@ -179,6 +184,9 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 		case <-wake:
 			startCheck(false, clock.Now())
 		case command := <-s.commands:
+			if command.ID != 0 {
+				status.LastCommandID = command.ID
+			}
 			now := clock.Now()
 			switch command.Kind {
 			case ManualCheck:
@@ -200,6 +208,9 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 			case IgnoreRelease:
 				status.OperationErr = store.IgnoreVersion(command.Version)
 				status.IgnoredVersion = store.Snapshot().IgnoredVersion
+			}
+			if command.ID != 0 {
+				status.CommandErr = status.OperationErr
 			}
 		case reply := <-completed:
 			status.Busy = false

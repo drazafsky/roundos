@@ -56,7 +56,7 @@ func main() {
 	startupProtocol := flag.Bool("startup-protocol", false, "print managed startup protocol and exit (no device access)")
 	backend := flag.String("backend", "png", "png (safe preview) or drm")
 	output := flag.String("output", "roundos-preview.png", "PNG preview path")
-	previewPage := flag.String("preview-page", "home", "PNG preview page: home, settings, wifi, clock, clock-options, clock-details, clock-gallery, timer, timer-duration, timer-picker, timer-dialog, touch, notifications, switcher, editor, accessibility")
+	previewPage := flag.String("preview-page", "home", "PNG preview page: home, settings, updates, wifi, clock, clock-options, clock-details, clock-gallery, timer, timer-duration, timer-picker, timer-dialog, touch, notifications, switcher, editor, accessibility")
 	previewTheme := flag.String("preview-theme", "dark", "PNG preview theme: dark, light or contrast")
 	card := flag.String("card", "/dev/dri/card0", "DRM device")
 	connector := flag.String("connector", "DPI-1", "DRM connector")
@@ -163,6 +163,10 @@ func main() {
 			}
 		} else if *previewPage == "settings" {
 			model.OpenSettings()
+		} else if *previewPage == "updates" {
+			now := time.Now()
+			model.SetUpdateStatus(update.Status{Preferences: update.DefaultPreferences(), LastAttempt: now.Add(-5 * time.Minute), NextManual: now.Add(10 * time.Minute), NextAutomatic: now.Add(24 * time.Hour), Result: update.CheckResult{Status: update.UpToDate}})
+			model.OpenUpdates()
 		} else if *previewPage == "wifi" {
 			model.OpenSettings()
 			model.OpenWiFi()
@@ -384,7 +388,12 @@ func main() {
 	defer presenterLoop.Close() // must happen before display.Close()
 	startup := service.NewStartup(service.NotifyReady)
 	firstFrame := presenterLoop.FirstFrame()
+	var updatesRefreshAt time.Time
 	render := func(inputAt time.Time) {
+		updatesRefreshAt = time.Time{}
+		if model.Page == shell.UpdatesPage {
+			updatesRefreshAt = time.Now().Add(time.Second)
+		}
 		presenterLoop.Submit(model, inputAt)
 	}
 	render(time.Time{})
@@ -395,6 +404,11 @@ func main() {
 		}
 	}
 	wifiClient := wifi.New()
+	flushUpdates := func() {
+		if request := model.TakeUpdateRequest(); request != nil && !updates.Submit(*request) {
+			model.UpdateRequestFailed()
+		}
+	}
 	flushWiFi := func() {
 		req := model.TakeWiFiRequest()
 		if req == nil {
@@ -532,11 +546,14 @@ func main() {
 	}
 	for {
 		now := time.Now()
+		if !backlightOff && updatesRefreshDue(model.Page, now, updatesRefreshAt) {
+			render(time.Time{})
+		}
 		var timer *time.Timer
 		var alarm <-chan time.Time
 		var next time.Duration
 		if !backlightOff {
-			next = nextWake(model, now)
+			next = nextWake(model, now, updatesRefreshAt)
 			if deadline := gestures.Deadline(); !deadline.IsZero() {
 				delay := deadline.Sub(now)
 				if delay <= 0 {
@@ -595,6 +612,9 @@ func main() {
 				}
 			}
 		case status, ok := <-updateEvents:
+			if timer != nil {
+				timer.Stop()
+			}
 			if !ok {
 				updateEvents = nil
 				continue
@@ -605,6 +625,9 @@ func main() {
 				log.Printf("release check: %v", status.Err)
 			} else if status.Sequence > 0 && !status.Busy {
 				log.Printf("release check: %s", status.Result.Status)
+			}
+			if model.SetUpdateStatus(status) && !backlightOff {
+				render(time.Time{})
 			}
 		case err := <-presenterLoop.Errors():
 			if timer != nil {
@@ -780,6 +803,7 @@ func main() {
 			flushText()
 			flushDialog()
 			flushWiFi()
+			flushUpdates()
 			if model.AppearanceDirty {
 				if err := appearance.Save(*appearancePath, model.Appearance); err != nil {
 					log.Printf("appearance save: %v", err)
@@ -883,7 +907,7 @@ func main() {
 			if model.BannerExpired(now) {
 				changed = true
 			}
-			if !backlightOff && (changed || model.Page == shell.Home || model.TouchUntil.After(now)) {
+			if !backlightOff && (changed || model.Page == shell.Home || model.Page == shell.UpdatesPage || model.TouchUntil.After(now)) {
 				render(time.Time{})
 			}
 
@@ -891,10 +915,20 @@ func main() {
 	}
 
 }
-func nextWake(m *shell.Model, now time.Time) time.Duration {
+func updatesRefreshDue(page int, now, deadline time.Time) bool {
+	return page == shell.UpdatesPage && (deadline.IsZero() || !now.Before(deadline))
+}
+
+func nextWake(m *shell.Model, now, updatesRefreshAt time.Time) time.Duration {
 	next := m.NextKineticWake(now)
 	if m.Page == shell.Home {
 		next = now.Truncate(time.Minute).Add(time.Minute).Sub(now)
+	}
+	if m.Page == shell.UpdatesPage {
+		delay := max(time.Millisecond, updatesRefreshAt.Sub(now))
+		if next == 0 || delay < next {
+			next = delay
+		}
 	}
 	if m.Banner != nil && m.BannerUntil.After(now) {
 		d := m.BannerUntil.Sub(now)

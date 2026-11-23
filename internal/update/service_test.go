@@ -161,6 +161,45 @@ func TestServiceStartupFailureManualCooldownAndPeriod(t *testing.T) {
 	}
 }
 
+func TestCommandOutcomeSurvivesLaterCheckPersistenceFailure(t *testing.T) {
+	store, _, client, s, _ := newServiceFixture(t, true)
+	call := waitCall(t, client)
+	s.Submit(Command{ID: 7, Kind: IgnoreRelease, Version: "0.6.0"})
+	waitStatus(t, s, func(st Status) bool { return st.LastCommandID == 7 })
+	store.mu.Lock()
+	store.syncDirectory = func(string) error { return errors.New("sync failed") }
+	store.mu.Unlock()
+	call.reply <- fakeReply{result: CheckResult{Status: UpToDate}}
+	st := waitStatus(t, s, func(st Status) bool { return st.Sequence == 1 })
+	if st.LastCommandID != 7 || st.CommandErr != nil || st.OperationErr == nil || st.IgnoredVersion != "0.6.0" {
+		t.Fatalf("check outcome overwrote the command acknowledgement: %+v", st)
+	}
+}
+
+func TestServicePublishesStartupPersistenceFailureUntilSuccessfulWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "updates.json")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, time.Now())
+	if err == nil {
+		t.Fatal("invalid state path was accepted")
+	}
+	store.state.Preferences.Automatic = false
+	ctx, cancel := context.WithCancel(context.Background())
+	s := Start(ctx, store, nil, "0.5.0", nil)
+	defer func() { cancel(); <-s.Done() }()
+	waitStatus(t, s, func(st Status) bool { return st.PersistenceErr != nil })
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s.Submit(Command{ID: 1, Kind: ChangePreferences, Preferences: store.Snapshot().Preferences})
+	st := waitStatus(t, s, func(st Status) bool { return st.LastCommandID == 1 })
+	if st.PersistenceErr != nil || st.CommandErr != nil {
+		t.Fatalf("successful write did not clear recovery error: %+v", st)
+	}
+}
+
 func TestServiceToggleIntervalAndBusyCoalescing(t *testing.T) {
 	_, clock, client, s, _ := newServiceFixture(t, false)
 	waitStatus(t, s, func(st Status) bool { return !st.Preferences.Automatic })
@@ -275,6 +314,18 @@ func TestServiceRetainsCheckFailureAcrossCommands(t *testing.T) {
 	st = waitStatus(t, s, func(st Status) bool { return st.IgnoredVersion == "0.6.0" })
 	if st.Sequence != 1 || !errors.Is(st.Err, networkErr) {
 		t.Fatalf("ignore command discarded check failure: %+v", st)
+	}
+}
+
+func TestServiceCommandAcknowledgementSurvivesUnidentifiedCommands(t *testing.T) {
+	_, _, _, s, _ := newServiceFixture(t, false)
+	waitStatus(t, s, func(st Status) bool { return !st.Preferences.Automatic })
+	s.Submit(Command{ID: 7, Kind: ChangePreferences, Preferences: Preferences{IntervalMinutes: 30}})
+	waitStatus(t, s, func(st Status) bool { return st.LastCommandID == 7 })
+	s.Submit(Command{Kind: IgnoreRelease, Version: "0.6.0"})
+	st := waitStatus(t, s, func(st Status) bool { return st.IgnoredVersion == "0.6.0" })
+	if st.LastCommandID != 7 {
+		t.Fatal("unidentified command erased the last UI acknowledgement")
 	}
 }
 

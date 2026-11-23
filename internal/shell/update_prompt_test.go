@@ -88,6 +88,18 @@ func TestIgnoreWaitsForPersistenceAndReportsFailure(t *testing.T) {
 	if m.Page != UpdatePrompt || !strings.Contains(m.Updates.Message, "COULD NOT IGNORE") {
 		t.Fatal("failed Ignore was reported as saved")
 	}
+	status.Busy = true
+	m.SetUpdateStatus(status)
+	if !strings.Contains(m.Updates.Message, "COULD NOT IGNORE") {
+		t.Fatal("concurrent check hid Ignore failure")
+	}
+	status.Busy = false
+	status.Sequence++
+	status.OperationErr = nil
+	m.SetUpdateStatus(status)
+	if !strings.Contains(m.Updates.Message, "COULD NOT IGNORE") {
+		t.Fatal("check completion hid Ignore failure")
+	}
 	m.UpdatePromptActivate()
 	request = m.TakeUpdateRequest()
 	status.LastCommandID = request.ID

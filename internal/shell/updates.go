@@ -51,9 +51,9 @@ func (m *Model) SetUpdateStatus(status update.Status) bool {
 	m.observeUpdateResult(status)
 	if m.Updates.IgnoreRequestID != 0 && status.LastCommandID == m.Updates.IgnoreRequestID {
 		version := m.Updates.IgnoreRequestVersion
-		m.Updates.IgnoreRequestID = 0
-		m.Updates.IgnoreRequestVersion = ""
 		if status.CommandErr == nil && status.IgnoredVersion == version {
+			m.Updates.IgnoreRequestID = 0
+			m.Updates.IgnoreRequestVersion = ""
 			if m.Updates.Notice != nil && m.Updates.Notice.Version == version {
 				m.retireUpdatePrompt()
 			}

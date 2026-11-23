@@ -29,3 +29,32 @@ func TestTypedOriginsUseActualWidgetAndCommittedValue(t *testing.T) {
 		t.Fatalf("wrong picker origin: %+v", event)
 	}
 }
+
+func TestSaturatedInputQueueRestoresOptimisticToggle(t *testing.T) {
+	m := New()
+	m.SetViewRevision(wire.ClockID, ui.View{Screens: []ui.ScreenSpec{ui.Screen("root", "Root", "", "", ui.Toggle("toggle", "Toggle", "enable", true))}}, 7)
+	m.Select(Clock)
+	queue := make(chan wire.UIEvent, 1)
+	queue <- wire.UIEvent{}
+	_, action := m.ActivateWidget()
+	if m.Views[Clock].Screens[0].Widgets[0].Checked {
+		t.Fatal("toggle did not apply optimism")
+	}
+	handled, delivered := m.SendWidgetInput(action, func(event wire.UIEvent) bool {
+		select {
+		case queue <- event:
+			return true
+		default:
+			return false
+		}
+	})
+	if !handled || delivered || !m.Views[Clock].Screens[0].Widgets[0].Checked {
+		t.Fatal("dropped event left optimistic toggle changed")
+	}
+	<-queue
+	_, action = m.ActivateWidget()
+	_, delivered = m.SendWidgetInput(action, func(event wire.UIEvent) bool { queue <- event; return true })
+	if !delivered || m.Views[Clock].Screens[0].Widgets[0].Checked || *(<-queue).Bool {
+		t.Fatal("successful input was rolled back")
+	}
+}

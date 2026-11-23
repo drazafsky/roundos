@@ -449,8 +449,8 @@ func main() {
 		}(req)
 	}
 	sendInput := func(appID, action string, delta int) bool {
-		if event := model.TakeWidgetInput(action); event != nil {
-			return manager.UIInput(appID, *event)
+		if handled, delivered := model.SendWidgetInput(action, func(event wire.UIEvent) bool { return manager.UIInput(appID, event) }); handled {
+			return delivered
 		}
 		return manager.Input(appID, action, delta)
 	}

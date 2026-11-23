@@ -103,7 +103,7 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	if _, ok := candidate.dialogActions[dialog]; !ok {
 		dialog = ""
 	}
-	view, err := stageReload(ctx, candidate, bindings, dialog)
+	view, values, err := stageReload(ctx, candidate, bindings, dialog)
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	for id, actions := range candidate.dialogActions {
 		r.dialogContracts[id] = actions
 	}
-	r.cache = nil
+	r.cache = values
 	r.intActions, r.boolActions, r.dialogActions = candidate.intActions, candidate.boolActions, candidate.dialogActions
 	r.dialogID = dialog
 	r.dialogNeedsClear = false
@@ -142,7 +142,7 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	return nil
 }
 
-func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, dialog string) (view ui.View, err error) {
+func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, dialog string) (view ui.View, values map[string]boundValue, err error) {
 	defer func() {
 		if recover() != nil {
 			err = fmt.Errorf("replacement binding evaluation failed")
@@ -150,60 +150,54 @@ func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, d
 	}()
 	// Resolve required getters once, including fields currently hidden or in
 	// inactive dialogs. Validation must not depend on today's visibility.
-	states := make(stateSnapshot, len(r.file.Manifest.Bindings))
-	for name, typ := range r.file.Manifest.Bindings {
+	values = make(map[string]boundValue, len(r.file.Manifest.Bindings))
+	for name := range r.file.Manifest.Bindings {
 		if err := ctx.Err(); err != nil {
-			return view, err
+			return view, nil, err
 		}
-		b := bindings[name]
-		switch typ {
-		case spec.StringBinding:
-			value := b.text()
-			states[name] = binding{typ: typ, text: func() string { return value }}
-		case spec.IntBinding:
-			value := b.integer()
-			states[name] = binding{typ: typ, integer: func() int { return value }}
-		case spec.BoolBinding:
-			value := b.boolean()
-			states[name] = binding{typ: typ, boolean: func() bool { return value }}
+		value, err := evaluateBinding(name, bindings[name])
+		if err != nil {
+			return view, nil, err
 		}
+		values[name] = value
 	}
+	states := frozenSnapshot(values)
 	text := func(value *spec.Value[string], limit int) error { _, err := states.optText(value, limit); return err }
 	for _, screen := range r.file.Document.Screens {
 		if err := text(&screen.Title, 80); err != nil {
-			return view, err
+			return view, nil, err
 		}
 		if err := text(screen.Hero, 80); err != nil {
-			return view, err
+			return view, nil, err
 		}
 		if err := text(screen.Subtitle, 240); err != nil {
-			return view, err
+			return view, nil, err
 		}
 		for _, group := range screen.Groups {
 			if err := text(group.Title, 80); err != nil {
-				return view, err
+				return view, nil, err
 			}
 			for _, widget := range group.Widgets {
 				if err := ctx.Err(); err != nil {
-					return view, err
+					return view, nil, err
 				}
 				if err := text(widget.Label, 160); err != nil {
-					return view, err
+					return view, nil, err
 				}
 				if err := text(widget.Detail, 240); err != nil {
-					return view, err
+					return view, nil, err
 				}
 				if widget.Value != nil {
 					value, err := states.integer(*widget.Value)
 					if err != nil {
-						return view, err
+						return view, nil, err
 					}
 					low, high := 0, 1439
 					if widget.Type != "timePicker" {
 						low, high = *widget.Min, *widget.Max
 					}
 					if value < low || value > high {
-						return view, fmt.Errorf("replacement widget %q value outside declared range", widget.ID)
+						return view, nil, fmt.Errorf("replacement widget %q value outside declared range", widget.ID)
 					}
 				}
 			}
@@ -211,13 +205,13 @@ func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, d
 	}
 	for _, item := range r.file.Document.Dialogs {
 		if err := ctx.Err(); err != nil {
-			return view, err
+			return view, nil, err
 		}
 		if err := text(&item.Title, 80); err != nil {
-			return view, err
+			return view, nil, err
 		}
 		if err := text(item.Body, 240); err != nil {
-			return view, err
+			return view, nil, err
 		}
 	}
 	// A hidden control or inactive dialog can become visible without another
@@ -225,31 +219,32 @@ func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, d
 	// before discarding the last-good layout, using the same frozen values.
 	allVisible, err := buildViewWithVisibility(r.file, states, "", true)
 	if err != nil {
-		return view, fmt.Errorf("replacement all-visible snapshot: %w", err)
+		return view, nil, fmt.Errorf("replacement all-visible snapshot: %w", err)
 	}
 	frame, err := json.Marshal(wire.Message{Version: wire.Version, Type: "view", View: &allVisible})
 	if err != nil {
-		return view, err
+		return view, nil, err
 	}
 	for _, item := range r.file.Document.Dialogs {
 		if err := ctx.Err(); err != nil {
-			return view, err
+			return view, nil, err
 		}
 		resolved, err := resolveDialog(item, states)
 		if err != nil {
-			return view, err
+			return view, nil, err
 		}
 		data, err := json.Marshal(resolved)
 		if err != nil {
-			return view, err
+			return view, nil, err
 		}
 		// The nonempty view has no dialog. Adding its JSON member costs
 		// exactly this key/comma plus the encoded dialog, independent of
 		// screen count. Never rebuild or serialize every screen per dialog.
 		size := len(frame) + len(",\"dialog\":") + len(data)
 		if size > wire.MaxMessage {
-			return view, fmt.Errorf("replacement dialog %q snapshot exceeds %d-byte IPC frame (%d bytes)", item.ID, wire.MaxMessage, size)
+			return view, nil, fmt.Errorf("replacement dialog %q snapshot exceeds %d-byte IPC frame (%d bytes)", item.ID, wire.MaxMessage, size)
 		}
 	}
-	return buildView(r.file, states, dialog)
+	view, err = buildView(r.file, states, dialog)
+	return view, values, err
 }

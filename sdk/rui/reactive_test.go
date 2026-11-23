@@ -1,6 +1,7 @@
 package rui
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -53,6 +54,33 @@ func TestDirtyBindingsEvaluateOnceAndSkipUnchangedViews(t *testing.T) {
 	r.Invalidate("demo.display", "demo.count")
 	if err := r.Flush(); err != nil || pub.count() != 2 {
 		t.Fatal("unchanged semantic values were published", err, pub.count())
+	}
+}
+
+func TestReloadSeedsLastGoodCacheBeforeTransientGetterFailure(t *testing.T) {
+	_, pub, r := loadDemo(t)
+	count, enabled, title := 5, true, "Retained"
+	registerDemo(t, r, &count, &enabled, &title)
+	r.Dispatch(app.Event{Type: "visibility", Visible: true})
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	data := replacement(t, func(source []byte) []byte {
+		return bytes.Replace(source, []byte("title: RUI Demo"), []byte("title: Reloaded"), 1)
+	})
+	if err := r.Replace(data); err != nil {
+		t.Fatal(err)
+	}
+	broken := r.bindings["demo.subtitle"]
+	broken.text = func() string { panic("private") }
+	r.bindings["demo.subtitle"] = broken
+	count = 6
+	r.Invalidate("demo.subtitle", "demo.count")
+	if err := r.Flush(); err == nil {
+		t.Fatal("missing transient getter error")
+	}
+	if pub.last().Screens[0].Subtitle != "Retained" || pub.last().Screens[1].Widgets[1].Value != 6 {
+		t.Fatal("reload discarded last-good values and blocked independent update")
 	}
 }
 

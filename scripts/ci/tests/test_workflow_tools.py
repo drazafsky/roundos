@@ -105,6 +105,232 @@ class GitHubToolTests(unittest.TestCase):
             self.assertEqual(github.graphql.call_count, 1)
 
 
+class ProgressLimitTests(unittest.TestCase):
+    def setUp(self):
+        self.github = mock.Mock(repo=REPO)
+        self.target = issue(45)
+        self.parent = dict(issue(10), sub_issues_summary={'total': 2})
+        self.siblings = [self.target, issue(46)]
+        self.statuses = {45: 'Todo', 46: 'Todo'}
+        self.parent_value = self.parent
+        self.locked = False
+        self.project = {'id': 'project', 'title': 'RoundOS', 'field': {'id': 'status', 'options': [
+            {'id': 'start', 'name': 'In Progress'}, {'id': 'review', 'name': 'PR Review'}]}}
+        self.github.api.side_effect = self.api
+        self.github.pages.side_effect = lambda path: iter(self.siblings)
+        self.github.repo_graphql.side_effect = self.query
+        self.github.graphql.side_effect = self.mutate
+
+    def api(self, path, *args, **kwargs):
+        if path == 'issues/45/parent':
+            return self.parent_value
+        if path == 'git/ref/heads/main':
+            return {'object': {'sha': SHA}}
+        if path == 'git/refs':
+            if self.locked:
+                raise tools.ToolError('Reference already exists (HTTP 422)')
+            self.locked = True
+            return {}
+        if path == 'git/refs/heads/roundos-issue-start/110':
+            self.assertIn('DELETE', args)
+            self.assertTrue(self.locked)
+            self.locked = False
+            return None
+        self.fail(f'Unexpected API call: {path}')
+
+    def query(self, query, **kwargs):
+        if query == tools.PROJECT_QUERY:
+            return {'projectsV2': {'nodes': [self.project], 'pageInfo': {'hasNextPage': False}}}
+        status = self.statuses[kwargs['number']]
+        nodes = [] if status is None else [{'id': f'item-{kwargs["number"]}', 'project': {'id': 'project'},
+                                           'fieldValueByName': {'name': status}}]
+        return {'issue': {'projectItems': {'nodes': nodes, 'pageInfo': {'hasNextPage': False}}}}
+
+    def mutate(self, query, **kwargs):
+        self.assertTrue(self.locked or self.parent_value is None or kwargs.get('option') == 'review')
+        if 'addProjectV2ItemById' in query:
+            return {'addProjectV2ItemById': {'item': {'id': 'item-45'}}}
+        status = 'PR Review' if kwargs['option'] == 'review' else 'In Progress'
+        self.statuses[45] = status
+        return {'updateProjectV2ItemFieldValue': {'projectV2Item': {'fieldValueByName': {'name': status}}}}
+
+    def start(self, *, apply=True, target='In Progress'):
+        def gh(*args):
+            if '--include' in args:
+                return 'HTTP/2 200\nX-Oauth-Scopes: repo, project\n\n{}'
+            return '{"default_branch": "main"}'
+        with mock.patch.object(tools, 'gh', side_effect=gh), redirect_stdout(StringIO()):
+            tools.project_status(self.github, [self.target], target, project_name='RoundOS', apply=apply)
+
+    def test_conflict_blocks_preview_and_apply_before_project_writes(self):
+        self.statuses[46] = 'In Progress'
+        for apply in (False, True):
+            with self.subTest(apply=apply), self.assertRaisesRegex(tools.ToolError, r'Parent .*#10.*#46'):
+                self.start(apply=apply)
+            self.github.graphql.assert_not_called()
+            self.assertFalse(self.locked)
+
+    def test_closed_sibling_with_in_progress_status_still_blocks(self):
+        self.siblings[1]['state'] = 'closed'
+        self.statuses[46] = 'In Progress'
+        with self.assertRaisesRegex(tools.ToolError, '#46'):
+            self.start()
+        self.github.graphql.assert_not_called()
+
+    def test_free_slot_allows_start_and_idempotent_retry(self):
+        self.start()
+        self.start()
+        self.assertEqual(self.github.graphql.call_count, 1)
+        self.assertFalse(self.locked)
+        self.github.pages.assert_called_with('issues/10/sub_issues')
+
+    def test_existing_active_issue_does_not_hide_another_active_sibling(self):
+        self.statuses.update({45: 'In Progress', 46: 'In Progress'})
+        with self.assertRaisesRegex(tools.ToolError, '#46'):
+            self.start()
+        self.github.graphql.assert_not_called()
+
+    def test_preview_does_not_lock_or_write(self):
+        self.start(apply=False)
+        self.github.graphql.assert_not_called()
+        self.assertFalse(any(call.args[0].startswith('git/') for call in self.github.api.call_args_list))
+
+    def test_no_parent_has_no_shared_slot(self):
+        self.parent_value = None
+        self.statuses[46] = 'In Progress'
+        self.start()
+        self.github.graphql.assert_called_once()
+        self.github.pages.assert_not_called()
+
+    def test_unreadable_known_parent_does_not_bypass_capacity_guard(self):
+        self.parent_value = None
+        self.target['parent_issue_url'] = 'https://api.github.com/repos/private/repo/issues/10'
+        with self.assertRaisesRegex(tools.ToolError, 'Cannot read parent'):
+            self.start()
+        self.github.graphql.assert_not_called()
+        self.github.pages.assert_not_called()
+
+    def test_siblings_outside_project_or_without_status_do_not_block(self):
+        for status in (None, '', 'PR Review'):
+            with self.subTest(status=status):
+                self.statuses[46] = status
+                self.start()
+        self.github.graphql.assert_called_once()
+
+    def test_missing_item_is_added_only_after_capacity_check(self):
+        self.statuses[45] = None
+        self.start()
+        self.assertEqual(self.github.graphql.call_count, 2)
+        self.assertFalse(self.locked)
+
+    def test_review_frees_slot_without_parent_checks_or_lock(self):
+        self.statuses.update({45: 'In Progress', 46: 'In Progress'})
+        self.start(target='PR Review')
+        self.assertEqual(self.statuses[45], 'PR Review')
+        self.github.api.assert_not_called()
+        self.github.pages.assert_not_called()
+
+    def test_competing_start_cannot_read_capacity_or_remove_owned_lock(self):
+        self.locked = True
+        with self.assertRaisesRegex(tools.ToolError, 'Cannot acquire start lock'):
+            self.start()
+        self.assertTrue(self.locked)
+        self.github.pages.assert_not_called()
+        self.github.graphql.assert_not_called()
+
+    def test_paginated_sibling_error_fails_closed_and_releases_lock(self):
+        def pages(path):
+            yield self.target
+            raise tools.ToolError('Second page unavailable')
+        self.github.pages.side_effect = pages
+        with self.assertRaisesRegex(tools.ToolError, 'Second page unavailable'):
+            self.start()
+        self.assertFalse(self.locked)
+        self.github.graphql.assert_not_called()
+
+    def test_incomplete_project_items_fail_closed_and_release_lock(self):
+        original = self.query
+        def query(text, **kwargs):
+            result = original(text, **kwargs)
+            if kwargs.get('number') == 46:
+                result['issue']['projectItems']['pageInfo']['hasNextPage'] = True
+            return result
+        self.github.repo_graphql.side_effect = query
+        with self.assertRaisesRegex(tools.ToolError, 'too many project items'):
+            self.start()
+        self.assertFalse(self.locked)
+        self.github.graphql.assert_not_called()
+
+    def test_mutation_failure_releases_lock(self):
+        self.github.graphql.side_effect = tools.ToolError('Write failed')
+        with self.assertRaisesRegex(tools.ToolError, 'Write failed'):
+            self.start()
+        self.assertFalse(self.locked)
+
+    def test_lock_cleanup_failure_reports_recovery_reference(self):
+        original = self.api
+        def api(path, *args, **kwargs):
+            if path == 'git/refs/heads/roundos-issue-start/110':
+                raise tools.ToolError('Delete failed')
+            return original(path, *args, **kwargs)
+        self.github.api.side_effect = api
+        with self.assertRaisesRegex(tools.ToolError, 'refs/heads/roundos-issue-start/110'):
+            self.start()
+        self.assertTrue(self.locked)
+
+    def test_missing_sibling_relationship_fails_closed(self):
+        self.siblings = [issue(46)]
+        self.parent['sub_issues_summary']['total'] = 1
+        with self.assertRaisesRegex(tools.ToolError, 'complete parent relationship'):
+            self.start()
+        self.github.graphql.assert_not_called()
+        self.assertFalse(self.locked)
+
+    def test_incomplete_or_duplicate_sibling_list_fails_closed(self):
+        for siblings in ([self.target], [self.target, self.target]):
+            with self.subTest(siblings=siblings):
+                self.siblings = siblings
+                with self.assertRaisesRegex(tools.ToolError, 'complete sibling list'):
+                    self.start()
+                self.github.graphql.assert_not_called()
+                self.assertFalse(self.locked)
+
+    def test_missing_sibling_total_fails_closed(self):
+        del self.parent['sub_issues_summary']
+        with self.assertRaisesRegex(tools.ToolError, 'complete sibling list'):
+            self.start()
+        self.github.graphql.assert_not_called()
+        self.assertFalse(self.locked)
+
+    def test_changed_parent_fails_before_project_write(self):
+        original = self.api
+        calls = 0
+        def api(path, *args, **kwargs):
+            nonlocal calls
+            if path == 'issues/45/parent':
+                calls += 1
+                return self.parent if calls == 1 else issue(11)
+            return original(path, *args, **kwargs)
+        self.github.api.side_effect = api
+        with self.assertRaisesRegex(tools.ToolError, 'parent changed'):
+            self.start()
+        self.assertFalse(self.locked)
+        self.github.graphql.assert_not_called()
+
+    def test_cross_repository_sibling_uses_its_own_repository(self):
+        other = mock.Mock(repo='other/repo')
+        other.repo_graphql.return_value = {'issue': {'projectItems': {'nodes': [
+            {'id': 'other-item', 'project': {'id': 'project'}, 'fieldValueByName': {'name': 'In Progress'}}],
+            'pageInfo': {'hasNextPage': False}}}}
+        self.siblings[1]['repository_url'] = 'https://api.github.com/repos/other/repo'
+        with mock.patch.object(tools, 'GitHub', return_value=other) as factory:
+            with self.assertRaisesRegex(tools.ToolError, 'other/repo#46'):
+                self.start()
+        factory.assert_called_once_with('other/repo')
+        other.repo_graphql.assert_called_once_with(tools.ITEM_QUERY, number=46)
+        self.assertFalse(self.locked)
+
+
 class ParentPlanTests(unittest.TestCase):
     def test_planned_section_preserves_original_and_repeated_runs_are_idempotent(self):
         original = 'Original requirements\n\n- Keep this\n'

@@ -82,6 +82,7 @@ func TestIgnoreWaitsForPersistenceAndReportsFailure(t *testing.T) {
 	}
 	status.LastCommandID = request.ID
 	status.OperationErr = errors.New("disk full")
+	status.CommandErr = status.OperationErr
 	status.IgnoredVersion = request.Version // rename committed, directory sync failed
 	m.SetUpdateStatus(status)
 	if m.Page != UpdatePrompt || !strings.Contains(m.Updates.Message, "COULD NOT IGNORE") {
@@ -91,6 +92,7 @@ func TestIgnoreWaitsForPersistenceAndReportsFailure(t *testing.T) {
 	request = m.TakeUpdateRequest()
 	status.LastCommandID = request.ID
 	status.OperationErr = nil
+	status.CommandErr = nil
 	status.IgnoredVersion = request.Version
 	m.SetUpdateStatus(status)
 	if m.Page != UpdatesPage || m.MaybePromptUpdate() {
@@ -352,10 +354,26 @@ func TestOldIgnoreFailureDoesNotLabelNewerRelease(t *testing.T) {
 	m.SetUpdateStatus(availableStatus(2, "0.7.0", "", false, ""))
 	m.MaybePromptUpdate()
 	st := availableStatus(2, "0.7.0", "", false, "")
-	st.LastCommandID, st.OperationErr = r.ID, errors.New("disk full")
+	st.LastCommandID, st.CommandErr = r.ID, errors.New("disk full")
 	m.SetUpdateStatus(st)
 	if m.Updates.Message != "" {
 		t.Fatal("older Ignore failure labeled a newer release")
+	}
+}
+
+func TestIgnoreAcknowledgementRetainsItsOwnOutcome(t *testing.T) {
+	m := New()
+	st := availableStatus(1, "0.6.0", "", false, "")
+	m.SetUpdateStatus(st)
+	m.MaybePromptUpdate()
+	m.Updates.PromptFocus = 3
+	m.UpdatePromptActivate()
+	r := m.TakeUpdateRequest()
+	st.LastCommandID, st.IgnoredVersion = r.ID, r.Version
+	st.OperationErr = errors.New("later check persistence failure")
+	m.SetUpdateStatus(st)
+	if m.Page != Home {
+		t.Fatal("later check error hid a successful Ignore acknowledgement")
 	}
 }
 

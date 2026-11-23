@@ -123,6 +123,7 @@ func (m *Model) Snapshot() *Model {
 	copyOf.WiFi.Networks = append([]wifi.Network(nil), m.WiFi.Networks...)
 	copyOf.WiFi.Pending = nil
 	copyOf.Updates.Pending = nil
+	copyOf.Updates.PendingInstall = nil
 	copyOf.Updates.PendingRelease = copyUpdateRelease(m.Updates.PendingRelease)
 	copyOf.Updates.Notice = copyUpdateRelease(m.Updates.Notice)
 	if m.Updates.Status.Result.Release != nil {

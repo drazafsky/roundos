@@ -35,7 +35,7 @@ func TestUpdatePromptCancelAndRepeatOnNextCheck(t *testing.T) {
 	}
 	m.Updates.PromptFocus = 1
 	m.UpdatePromptActivate()
-	if m.Page != UpdatePrompt || m.Updates.Message != "INSTALLATION UNAVAILABLE" || m.TakeUpdateRequest() != nil {
+	if m.Page != UpdatePrompt || m.Updates.Message != "CHECKING INSTALL SUPPORT" || m.TakeUpdateRequest() != nil {
 		t.Fatal("unavailable Install action was not explained safely")
 	}
 }

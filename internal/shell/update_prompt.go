@@ -150,7 +150,16 @@ func (m *Model) UpdatePromptActivate() bool {
 	case 0:
 		return m.DismissUpdate()
 	case 1:
-		m.Updates.Message = "INSTALLATION UNAVAILABLE"
+		if !m.installationAllowed() {
+			m.Updates.Message = m.installationDisabledReason()
+			return true
+		}
+		m.Updates.NextID++
+		m.Updates.PendingInstall = &update.InstallCommand{ID: m.Updates.NextID, Release: *copyUpdateRelease(m.Updates.Notice)}
+		m.Updates.InstallInFlight = m.Updates.NextID
+		m.Updates.InstallRequestVersion = m.Updates.Notice.Version
+		m.Updates.InstallQueueError = false
+		m.Updates.Message = ""
 		return true
 	case 2:
 		m.ReflowReleaseNotes()
@@ -292,11 +301,31 @@ func (m *Model) DrawUpdatePrompt(im *image.RGBA) {
 	if m.Updates.Notice != nil {
 		textTheme(im, 240, 116, 2, strings.ToUpper(m.Updates.Notice.Version), p.PrimaryText, true, m.Appearance)
 	}
-	if m.Updates.Message != "" {
-		textTheme(im, 240, 143, 1, m.Updates.Message, p.Warning, true, m.Appearance)
+	message := m.Updates.Message
+	if m.Updates.Notice != nil && (m.Updates.Installation.Status.Version == m.Updates.Notice.Version || m.Updates.InstallRequestVersion == m.Updates.Notice.Version) {
+		if install := m.installationMessage(); install != "" {
+			message = install
+		}
+	}
+	if message != "" {
+		textTheme(im, 240, 143, 1, message, p.Warning, true, m.Appearance)
 	}
 	labels := []string{"CANCEL", "INSTALL", "RELEASE NOTES", "IGNORE RELEASE"}
-	details := []string{"REMIND AT THE NEXT CHECK", "INSTALLATION UNAVAILABLE", "READ WHAT CHANGED", "SKIP THIS VERSION"}
+	details := []string{"REMIND AT THE NEXT CHECK", "MANAGED DEVICE REQUIRED", "READ WHAT CHANGED", "SKIP THIS VERSION"}
+	if !m.Updates.Installation.Ready {
+		details[1] = "CHECKING SUPPORT"
+	}
+	if m.Updates.Installation.Status.Phase == "recovery_required" {
+		details[1] = "SSH RECOVERY REQUIRED"
+	}
+	if m.Updates.Installation.Status.InProgress() || m.Updates.InstallInFlight != 0 {
+		labels[0] = "CLOSE"
+		details[0] = "UPDATE WILL CONTINUE"
+		details[1] = "UPDATE IN PROGRESS"
+	}
+	if m.installationAllowed() {
+		details[1] = "ROUNDOS WILL RESTART"
+	}
 	for i, label := range labels {
 		y := 165 + i*57
 		rect(im, 93, y, 387, y+49, p.Surface)
@@ -304,7 +333,7 @@ func (m *Model) DrawUpdatePrompt(im *image.RGBA) {
 			outlineRect(im, 91, y-2, 389, y+51, p.Focus)
 		}
 		color := p.PrimaryText
-		if i == 1 || (i == 3 && m.Updates.InFlight != 0) {
+		if (i == 1 && !m.installationAllowed()) || (i == 3 && m.Updates.InFlight != 0) {
 			color = p.Disabled
 		}
 		textTheme(im, 240, y+6, 2, label, color, true, m.Appearance)

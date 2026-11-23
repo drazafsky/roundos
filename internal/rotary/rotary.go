@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -39,6 +40,7 @@ func DefaultConfig() Config {
 }
 
 type Event struct {
+	At    time.Time
 	Kind  string
 	Delta int
 }
@@ -123,6 +125,7 @@ func (r *Reader) Run(ctx context.Context, out chan<- Event) error {
 		code := binary.LittleEndian.Uint16(b[offset+2 : offset+4])
 		value := int(int32(binary.LittleEndian.Uint32(b[offset+4 : offset+8])))
 		for _, ev := range r.dec.Feed(typ, code, value) {
+			ev.At = time.Now()
 			select {
 			case out <- ev:
 			case <-ctx.Done():

@@ -35,6 +35,7 @@ import (
 )
 
 type action struct {
+	at         time.Time
 	wifiStatus wifi.Status
 	wifiKind   string
 	wifiErr    error
@@ -299,6 +300,9 @@ func main() {
 	}
 	updates := update.Start(ctx, updateStore, update.NewGitHub(), release.Version, nil)
 	updateEvents := updates.Events()
+	installations := update.StartInstallation(ctx, update.NewInstaller())
+	installationEvents := installations.Events()
+	reportedInstallation := ""
 	var dev *appmgr.DevConfig
 	if *ruiDevApp != "" {
 		dev = &appmgr.DevConfig{AppID: *ruiDevApp, Directory: *ruiDevDir}
@@ -376,7 +380,7 @@ func main() {
 						return
 					case ev := <-inputs:
 						select {
-						case actions <- action{kind: ev.Kind, delta: ev.Delta}:
+						case actions <- action{kind: ev.Kind, delta: ev.Delta, at: ev.At}:
 						case <-ctx.Done():
 							return
 						}
@@ -410,7 +414,7 @@ func main() {
 						return
 					case ev := <-inputs:
 						select {
-						case actions <- action{kind: ev.Kind, delta: ev.Delta}:
+						case actions <- action{kind: ev.Kind, delta: ev.Delta, at: ev.At}:
 						case <-ctx.Done():
 							return
 						}
@@ -457,6 +461,9 @@ func main() {
 		if request := model.TakeUpdateRequest(); request != nil && !updates.Submit(*request) {
 			model.UpdateRequestFailed()
 		}
+		if request := model.TakeInstallRequest(); request != nil && !installations.Submit(*request) {
+			model.InstallRequestFailed()
+		}
 	}
 	flushWiFi := func() {
 		req := model.TakeWiFiRequest()
@@ -502,6 +509,7 @@ func main() {
 	gestures := gesture.New()
 	suppressTouch := false
 	activeContacts := 0
+	var updateInputAfter time.Time
 	var lastTouchTrace time.Time
 	lastTouchCount := -1
 	suppressButton := false
@@ -616,6 +624,7 @@ func main() {
 		flushDialog()
 		flushWiFi()
 		if activeContacts == 0 && buttonDownAt.IsZero() && model.MaybePromptUpdate() {
+			updateInputAfter = now
 			gestures.Reset()
 			router.Reset()
 			if err := manager.SetForeground(model.AppID(model.Page)); err != nil {
@@ -690,6 +699,32 @@ func main() {
 					log.Printf("%s PID=%d RSS=%.2f MiB", appID, pid, float64(rss)/(1024*1024))
 				}
 			}
+		case status, ok := <-installationEvents:
+			if timer != nil {
+				timer.Stop()
+			}
+			if !ok {
+				installationEvents = nil
+				continue
+			}
+			if status.Err != nil {
+				log.Printf("update installation status: %v", status.Err)
+			}
+			if status.CommandErr != nil {
+				log.Printf("update installation request: %v", status.CommandErr)
+			}
+			changed := model.SetInstallationStatus(status)
+			if status.Status.ID != "" && status.Status.ID != reportedInstallation && !status.Status.InProgress() {
+				reportedInstallation = status.Status.ID
+				if request, ok := installationOutcomeNotice(status.Status); ok {
+					now := time.Now()
+					result := notificationStore.Emit("system", request, now, true)
+					changed = model.UpdateNotices(notificationStore.Items(), result, now) || changed
+				}
+			}
+			if changed && !backlightOff {
+				render(time.Time{})
+			}
 		case status, ok := <-updateEvents:
 			if timer != nil {
 				timer.Stop()
@@ -708,6 +743,7 @@ func main() {
 			oldPage := model.Page
 			changed := model.SetUpdateStatus(status)
 			if oldPage != model.Page {
+				updateInputAfter = time.Now()
 				if activeContacts > 0 {
 					suppressTouch = true
 				}
@@ -748,8 +784,27 @@ func main() {
 				timer.Stop()
 			}
 			inputAt := time.Now()
+			if !a.at.IsZero() {
+				inputAt = a.at
+			}
 			if a.kind == "touch_frame" && !a.frame.At.IsZero() {
 				inputAt = a.frame.At // timestamp when the complete evdev frame was decoded
+			}
+			if staleUpdateInput(a, updateInputAfter) {
+				switch a.kind {
+				case "touch_frame":
+					suppressTouch = true
+				case "button_down":
+					suppressButton = true
+					buttonDownAt = time.Time{}
+					continue
+				case "button_up":
+					suppressButton = false
+					buttonDownAt = time.Time{}
+					continue
+				case "rotate", "press":
+					continue
+				}
 			}
 			if a.kind == "stats" {
 				log.Printf("RoundOS stats: %s; coalesced-visual-frames=%d", metrics.Summary(), presenterLoop.Coalesced())
@@ -1063,7 +1118,7 @@ func stdinCommands(ctx context.Context, actions chan<- action) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		line := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		a := action{kind: line}
+		a := action{kind: line, at: time.Now()}
 		switch line {
 		case "left", "l", "-":
 			a.kind = "rotate"

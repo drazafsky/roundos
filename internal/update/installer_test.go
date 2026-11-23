@@ -547,6 +547,74 @@ func TestInstallerUnacknowledgedHelperLaunchReleasesQueuedRequest(t *testing.T) 
 	assertManagedLink(t, i, "current", c.old)
 }
 
+func TestInstallerAcceptsVerifiedManagedUnitsAfterManualRollback(t *testing.T) {
+	for _, source := range []string{"previous", "update-controller"} {
+		t.Run(source, func(t *testing.T) {
+			i, _, r := installerFixture(t)
+			snapshot := filepath.Join(i.root, "releases", "0.5.1")
+			writeInstalledFixture(t, snapshot, "0.5.1")
+			if err := atomicInstallLink(i.root, source, snapshot); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range managedUpdateUnits() {
+				data, _ := os.ReadFile(filepath.Join(snapshot, name))
+				if err := os.WriteFile(filepath.Join(filepath.Dir(i.unitFile), name), data, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := i.preflight(context.Background()); err != nil {
+				t.Fatalf("unchanged managed units rejected after rollback: %v", err)
+			}
+			// Matching bytes alone cannot bless a modified snapshot template.
+			unit := filepath.Join(snapshot, "roundos.service")
+			os.WriteFile(unit, []byte("[Service]\nType=notify\n# modified\n"), 0644)
+			os.WriteFile(i.unitFile, []byte("[Service]\nType=notify\n# modified\n"), 0644)
+			if _, err := i.Request(context.Background(), r); err == nil {
+				t.Fatal("modified managed template was accepted")
+			}
+		})
+	}
+}
+
+func TestInstallerWaitsForLifecycleLockAndSettlesQueuedRequest(t *testing.T) {
+	i, c, r := installerFixture(t)
+	st, err := i.Request(context.Background(), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := i.lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	i.startWait = 10 * time.Millisecond
+	if err := i.awaitHelperStartup(context.Background(), st.ID); err == nil {
+		t.Fatal("unrelated lifecycle lock acknowledged helper startup")
+	}
+	c.active = false // desktop recovery stopped the managed shell
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- i.RunPending(ctx) }()
+	select {
+	case err := <-done:
+		t.Fatalf("helper exited instead of waiting for lifecycle lock: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	lock.Close()
+	if err := <-done; err == nil {
+		t.Fatal("inactive managed shell was not reported")
+	}
+	if status, err := i.ReadStatus(); err != nil || status.Phase != "failed" {
+		t.Fatalf("queued request was stranded: %+v, %v", status, err)
+	}
+	c.active = true
+	i.startWait = 0
+	if _, err := i.Request(context.Background(), r); err != nil {
+		t.Fatalf("settled request blocked explicit retry: %v", err)
+	}
+}
+
 func TestInstallerBootRecoveryDoesNotBlockHealthyShellOnOutcomeWriteFailure(t *testing.T) {
 	i, c, r := installerFixture(t)
 	i.Request(context.Background(), r)

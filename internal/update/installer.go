@@ -207,6 +207,7 @@ func (i *Installer) preflight(ctx context.Context) (string, error) {
 			return "", err
 		}
 	}
+	previous, _ := i.releaseLink("previous", true)
 	for _, name := range managedUpdateUnits() {
 		template, err := readManagedUnit(filepath.Join(current, name))
 		if err != nil {
@@ -216,7 +217,7 @@ func (i *Installer) preflight(ctx context.Context) (string, error) {
 			return "", err
 		}
 		unit, err := readManagedUnit(filepath.Join(filepath.Dir(i.unitFile), name))
-		if err != nil || !bytes.Equal(unit, template) {
+		if err != nil || (!bytes.Equal(unit, template) && !matchesManagedTemplate(ctx, unit, name, controller, previous)) {
 			return "", errors.New("custom service configuration requires a manual update")
 		}
 		if err := i.effectiveManagedUnit(ctx, name); err != nil {
@@ -247,6 +248,26 @@ func (i *Installer) preflight(ctx context.Context) (string, error) {
 		return "", errors.New("RoundOS must be running as its managed service")
 	}
 	return current, nil
+}
+
+// Manual rollback keeps the installed units and controller. Accept only an
+// unchanged, checksum-verified template from one of those managed snapshots.
+func matchesManagedTemplate(ctx context.Context, unit []byte, name string, snapshots ...string) bool {
+	for _, snapshot := range snapshots {
+		if snapshot == "" || trustedInstalledPath(filepath.Join(snapshot, "SHA256SUMS"), false) != nil {
+			continue
+		}
+		checksums, err := readChecksums(filepath.Join(snapshot, "SHA256SUMS"))
+		if err != nil {
+			continue
+		}
+		file := filepath.Join(snapshot, name)
+		template, err := readManagedUnit(file)
+		if err == nil && bytes.Equal(unit, template) && verifyFile(ctx, file, checksums[name]) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (i *Installer) Request(ctx context.Context, release Release) (InstallStatus, error) {
@@ -318,7 +339,9 @@ func (i *Installer) awaitHelperStartup(ctx context.Context, id string) error {
 	for {
 		if status, err := i.ReadStatus(); err != nil {
 			return err
-		} else if status.ID != id || status.Phase != "queued" {
+		} else if status.ID != id {
+			return errors.New("update helper request was replaced before acknowledgement")
+		} else if status.Phase != "queued" {
 			return nil
 		}
 		select {
@@ -326,21 +349,16 @@ func (i *Installer) awaitHelperStartup(ctx context.Context, id string) error {
 			return ctx.Err()
 		case <-ticker.C:
 		case <-timer.C:
-			lock, err := i.lock()
-			if errors.Is(err, ErrInstallBusy) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			lock.Close()
 			return errors.New("update helper did not acknowledge startup")
 		}
 	}
 }
 
 func (i *Installer) RunPending(ctx context.Context) error {
-	lock, err := i.lock()
+	// A lifecycle operation can take the lock between Request and helper
+	// startup. Wait for it rather than exhausting systemd's short retry burst
+	// and leaving a durable queued request without a worker.
+	lock, err := i.awaitInstallLock(ctx)
 	if err != nil {
 		return err
 	}

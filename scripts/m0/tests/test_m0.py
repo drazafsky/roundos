@@ -234,6 +234,25 @@ p.write_text(json.dumps(s));sys.exit(rc)
                 self.assertIn('Another update installer is running',result.stderr)
                 self.assertEqual(self.state.read_bytes(),before)
 
+    def test_manual_version_changes_reject_pending_recovery_records(self):
+        state=self.base/'shell-data';state.mkdir()
+        record=state/'update-install.json'
+        record.write_text(json.dumps({'status':{'id':'a'*32,'version':'0.6.0','phase':'recovery_required'}}))
+        record.chmod(0o600)
+        before=self.state.read_bytes()
+        for action in ('activate','rollback'):
+            result=self.call(action,success=False)
+            self.assertIn('Pending update transaction requires recovery',result.stderr)
+            self.assertEqual(self.state.read_bytes(),before)
+
+    def test_desktop_recovery_can_lock_an_existing_read_only_file(self):
+        self.call('activate')
+        lock=self.base/'shell-data/update-install.lock';lock.chmod(0o400)
+        self.call('disable')
+        state=json.loads(self.state.read_text())
+        self.assertTrue(state['lightdm.service']['active'])
+        self.assertFalse(state['roundos.service']['active'])
+
     def test_rollback_switches_managed_symlinks(self):
         (self.root/'previous').symlink_to(self.root/'releases'/'0.4.9')
         self.call('activate')

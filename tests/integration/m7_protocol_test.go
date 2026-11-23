@@ -109,20 +109,24 @@ func (m *timerTrafficMeter) accept(message wire.Message, rawBytes int64) (bool, 
 	default:
 		return false, nil
 	}
+	if len(m.current.Screens) == 0 || m.current.Screens[0].Hero == "" || m.current.Primary != m.current.Screens[0].Hero {
+		return false, fmt.Errorf("Timer scalar countdown differs from displayed root hero")
+	}
+	displayed := m.current.Screens[0].Hero
 	if !wasReady {
 		if message.Type != "view" || len(m.current.Screens) == 0 {
 			return false, fmt.Errorf("missing initial layout")
 		}
 		m.ready = true
-		m.label = m.current.Primary
+		m.label = displayed
 		return true, nil
 	}
 	if message.Type == "view" && len(m.current.Screens) > 0 {
 		m.result.FullTrees++
 	}
-	if m.current.Primary != m.label {
+	if displayed != m.label {
 		m.result.Ticks++
-		m.label = m.current.Primary
+		m.label = displayed
 	}
 	return true, nil
 }
@@ -218,7 +222,7 @@ func measureTimerTraffic(t *testing.T, executable string, modern bool) timerTraf
 }
 
 func TestTimerMeterCountsRawAndAuxiliaryFrames(t *testing.T) {
-	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer"}}}
+	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer", Hero: "10"}}}
 	meter := timerTrafficMeter{modern: true}
 	if _, err := meter.accept(wire.Message{Type: "view", View: &view, LayoutRevision: 1, NewRevision: 1}, 0); err != nil {
 		t.Fatal(err)
@@ -226,7 +230,7 @@ func TestTimerMeterCountsRawAndAuxiliaryFrames(t *testing.T) {
 	var stream bytes.Buffer
 	for _, body := range []string{
 		`{ "version":7, "type":"diagnostic", "padding":"` + strings.Repeat("x", 500) + `" }`,
-		`{ "version":7, "type":"widget_patch", "layout_revision":1, "base_revision":1, "new_revision":2, "padding":"` + strings.Repeat("y", 500) + `", "updates":[{"property":"primary","string":"09"}] }`,
+		`{ "version":7, "type":"widget_patch", "layout_revision":1, "base_revision":1, "new_revision":2, "padding":"` + strings.Repeat("y", 500) + `", "updates":[{"property":"primary","string":"09"},{"screen":"root","property":"hero","string":"09"}] }`,
 	} {
 		var header [4]byte
 		binary.BigEndian.PutUint32(header[:], uint32(len(body)))
@@ -251,7 +255,7 @@ func TestTimerMeterCountsRawAndAuxiliaryFrames(t *testing.T) {
 }
 
 func TestTimerMeterRejectsPostStartupLegacySnapshots(t *testing.T) {
-	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer"}}}
+	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer", Hero: "10"}}}
 	meter := timerTrafficMeter{modern: true}
 	legacy := wire.Message{Type: "view", View: &view}
 	if _, err := meter.accept(legacy, 100); err != nil || meter.ready {
@@ -268,7 +272,7 @@ func TestTimerMeterRejectsPostStartupLegacySnapshots(t *testing.T) {
 }
 
 func TestTimerMeterRejectsInvalidRevisionsWithoutCountingOrAcknowledgingTicks(t *testing.T) {
-	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer"}}}
+	view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer", Hero: "10"}}}
 	value := "09"
 	for _, test := range []struct {
 		name               string
@@ -284,7 +288,7 @@ func TestTimerMeterRejectsInvalidRevisionsWithoutCountingOrAcknowledgingTicks(t 
 				t.Fatal(err)
 			}
 			patch := wire.Message{Type: "widget_patch", LayoutRevision: test.layout, BaseRevision: test.base, NewRevision: test.next,
-				Updates: []wire.PropertyUpdate{{Property: "primary", String: &value}}}
+				Updates: []wire.PropertyUpdate{{Property: "primary", String: &value}, {Screen: "root", Property: "hero", String: &value}}}
 			if ack, err := meter.accept(patch, 100); err == nil || ack {
 				t.Fatal("invalid patch acknowledged")
 			}
@@ -308,6 +312,24 @@ func TestTimerMeterRejectsInvalidRevisionsWithoutCountingOrAcknowledgingTicks(t 
 	meter.accept(initial, 100)
 	if ack, err := meter.accept(initial, 100); err == nil || ack || meter.result.FullTrees != 0 {
 		t.Fatal("duplicate snapshot accepted")
+	}
+}
+
+func TestTimerMeterRejectsTicksThatDoNotReachDisplayedHero(t *testing.T) {
+	for _, field := range []string{"primary", "hero"} {
+		meter := timerTrafficMeter{modern: true}
+		view := wire.View{Primary: "10", Screens: []wire.Screen{{ID: "root", Title: "Timer", Hero: "10"}}}
+		if _, err := meter.accept(wire.Message{Type: "view", View: &view, LayoutRevision: 1, NewRevision: 1}, 100); err != nil {
+			t.Fatal(err)
+		}
+		value := "09"
+		update := wire.PropertyUpdate{Property: field, String: &value}
+		if field == "hero" {
+			update.Screen = "root"
+		}
+		if ack, err := meter.accept(wire.Message{Type: "widget_patch", LayoutRevision: 1, BaseRevision: 1, NewRevision: 2, Updates: []wire.PropertyUpdate{update}}, 100); err == nil || ack || meter.result.Ticks != 0 {
+			t.Fatal("accepted a scalar/display countdown mismatch", field)
+		}
 	}
 }
 

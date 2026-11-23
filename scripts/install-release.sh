@@ -192,7 +192,11 @@ else
   # Keep their installer contract; new controllers always record the path.
   stage=$(mktemp -d "$RELEASES/.install.XXXXXXXX")
 fi
-cleanup() { if [ -n "${stage:-}" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi; }
+ctl_temp=''
+cleanup() {
+  if [ -n "${stage:-}" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi
+  if [ -n "${ctl_temp:-}" ]; then rm -f -- "$ctl_temp"; fi
+}
 trap cleanup EXIT HUP INT TERM
 install -d -o root -g root -m 0755 "$stage/bin"
 for bin in roundd round-clock round-timer; do
@@ -224,7 +228,13 @@ elif [ -e /opt/roundos/current ]; then
 fi
 ln -s "$DEST" /opt/roundos/.current.new
 mv -Tf /opt/roundos/.current.new /opt/roundos/current
-install -o root -g root -m 0755 "$ROOT/scripts/roundosctl.sh" /usr/local/sbin/roundosctl
+# Preserve a complete SSH recovery command across failed or interrupted copies.
+ctl_temp=$(mktemp /usr/local/sbin/.roundosctl.XXXXXXXX)
+install -o root -g root -m 0755 "$ROOT/scripts/roundosctl.sh" "$ctl_temp"
+sync -f "$ctl_temp"
+mv -Tf "$ctl_temp" /usr/local/sbin/roundosctl
+ctl_temp=''
+sync -f /usr/local/sbin
 if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
   ln -s "$DEST" /opt/roundos/.update-controller.new
   mv -Tf /opt/roundos/.update-controller.new /opt/roundos/update-controller

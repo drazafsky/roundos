@@ -228,6 +228,26 @@ class InstallerIdentityTests(unittest.TestCase):
         self.assertIn('-f ' + str(dest), self.sync_log.read_text().splitlines())
         self.assertEqual(self.systemctl_calls.read_text().splitlines(),
                          ['is-active roundos.service', 'daemon-reload'])
+        control = self.root / 'localbin/roundosctl'
+        self.assertEqual(control.read_bytes(), (self.root / 'scripts/roundosctl.sh').read_bytes())
+        self.assertEqual(control.stat().st_mode & 0o777, 0o755)
+        self.assertIn('-f ' + str(control.parent), self.sync_log.read_text().splitlines())
+        self.assertEqual(list(control.parent.glob('.roundosctl.*')), [])
+
+    def test_failed_control_copy_preserves_existing_ssh_recovery_command(self):
+        self.complete_install_fixture()
+        control = self.root / 'localbin/roundosctl'
+        control.write_text('#!/bin/sh\necho existing recovery command\n')
+        original = control.read_bytes()
+        wrapper = self.root / 'install-wrapper.py'
+        self.command('install', 'case "$*" in *scripts/roundosctl.sh*)\n'
+                     ' for target do :; done\n'
+                     ' printf partial > "$target"\n exit 97;;\nesac\n'
+                     'exec python3 "' + str(wrapper) + '" "$@"')
+        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1')
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertEqual(control.read_bytes(), original)
+        self.assertEqual(list(control.parent.glob('.roundosctl.*')), [])
 
     def test_managed_transaction_defers_unit_and_controller_commit(self):
         self.complete_install_fixture()

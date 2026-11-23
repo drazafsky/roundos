@@ -44,12 +44,16 @@ func fromWire(m wire.Message) Event {
 }
 
 type Client struct {
-	conn   net.Conn
-	mu     sync.Mutex
-	events chan Event
-	done   chan struct{}
-	once   sync.Once
-	last   *wire.View
+	conn               net.Conn
+	mu                 sync.Mutex
+	events             chan Event
+	done               chan struct{}
+	once               sync.Once
+	last               *wire.View
+	secureEditor       string
+	textRequests       map[string]bool
+	trackEditorResults bool
+	editorResults      map[string]bool
 }
 
 func Connect() (*Client, error) {
@@ -79,6 +83,7 @@ func Connect() (*Client, error) {
 	return c, nil
 }
 func (c *Client) readLoop() {
+	defer c.Close()
 	defer close(c.events)
 	defer close(c.done)
 	for {
@@ -88,6 +93,20 @@ func (c *Client) readLoop() {
 		}
 		if msg.Type != "visibility" && msg.Type != "input" && msg.Type != "gesture" && msg.Type != "close" && msg.Type != "contacts" && msg.Type != "text_result" {
 			continue
+		}
+		if msg.Type == "text_result" && msg.TextResult != nil {
+			c.mu.Lock()
+			if c.trackEditorResults && c.textRequests[msg.TextResult.ID] {
+				if c.editorResults == nil {
+					c.editorResults = map[string]bool{}
+				}
+				c.editorResults[msg.TextResult.ID] = true
+			}
+			delete(c.textRequests, msg.TextResult.ID)
+			if c.secureEditor == msg.TextResult.ID {
+				c.secureEditor = ""
+			}
+			c.mu.Unlock()
 		}
 		select {
 		case c.events <- fromWire(msg):
@@ -154,6 +173,58 @@ func (c *Client) SubscribeContacts(enabled bool) error {
 func (c *Client) RequestText(id, label, initial string, secure bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
+	if c.secureEditor != "" {
+		return errors.New("another secure text request is still active")
+	}
+	if c.textRequests[id] || c.editorResults[id] {
+		return errors.New("text request ID is still outstanding")
+	}
+	if len(c.textRequests)+len(c.editorResults) >= 64 {
+		return errors.New("too many outstanding text requests")
+	}
+	err := wire.Write(c.conn, wire.Message{Version: wire.Version, Type: "text_request", TextRequest: &wire.TextRequest{ID: id, Label: label, Initial: initial, Secure: secure}})
+	if err == nil {
+		if c.textRequests == nil {
+			c.textRequests = make(map[string]bool)
+		}
+		c.textRequests[id] = true
+	}
+	if err == nil && secure {
+		c.secureEditor = id
+	}
+	return err
+}
+
+// SecureEditorActive lets development tooling defer layout replacement without
+// reading or exposing any editor value. Only a matching result clears it.
+func (c *Client) SecureEditorActive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.secureEditor != ""
+}
+
+// TextEditorActive reports outstanding app editor requests without exposing
+// their contents. Reload waits for the result before changing editor context.
+func (c *Client) TextEditorActive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.textRequests)+len(c.editorResults) > 0
+}
+
+// TrackEditorResults lets a serial UI runtime defer replacement until it has
+// dispatched each result to the application's event loop. Legacy clients keep
+// their existing receive-based request-ID lifetime unless they opt in.
+func (c *Client) TrackEditorResults() {
+	c.mu.Lock()
+	c.trackEditorResults = true
+	c.mu.Unlock()
+}
+
+// AcknowledgeTextResult belongs on that same application event loop, before
+// handling the result and returning to the next layout-update selection.
+func (c *Client) AcknowledgeTextResult(id string) {
+	c.mu.Lock()
+	delete(c.editorResults, id)
+	c.mu.Unlock()
 }
 func (c *Client) Close() error { c.once.Do(func() { c.conn.Close() }); return nil }

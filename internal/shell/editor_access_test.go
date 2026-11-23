@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"image/color"
 	"testing"
 	"time"
@@ -92,6 +93,60 @@ func TestSecureEditorClearsOnShellInterrupt(t *testing.T) {
 	app, result := m.TakeTextResult()
 	if app != wire.ClockID || result == nil || !result.Canceled || result.Value != "" {
 		t.Fatalf("result: %s %+v", app, result)
+	}
+}
+
+func TestNonsecureEditorInterruptCancelsRequestBeforeReopening(t *testing.T) {
+	m := New()
+	m.Select(Clock)
+	request := wire.TextRequest{ID: "title", Initial: "Original"}
+	if !m.OpenAppEditor(wire.ClockID, request) {
+		t.Fatal("initial editor did not open")
+	}
+	m.Editor.Insert(" draft")
+	m.OpenNotifications()
+	app, result := m.TakeTextResult()
+	if app != wire.ClockID || result == nil || result.ID != "title" || !result.Canceled || result.Value != "" {
+		t.Fatalf("interrupted nonsecure request not canceled: %s %+v", app, result)
+	}
+	if _, result := m.TakeTextResult(); result != nil {
+		t.Fatal("canceled result repeated")
+	}
+	m.Select(Clock)
+	if !m.OpenAppEditor(wire.ClockID, request) || m.Editor.Draft != "Original" {
+		t.Fatal("editor did not reopen with authoritative app value")
+	}
+}
+
+func TestCanceledAppEditorReturnPathsCannotEmitAnotherResult(t *testing.T) {
+	for _, secure := range []bool{false, true} {
+		for _, overlay := range []string{"notifications", "switcher", "accessibility"} {
+			t.Run(fmt.Sprintf("%s/secure=%t", overlay, secure), func(t *testing.T) {
+				m := New()
+				m.Select(Clock)
+				m.OpenAppEditor(wire.ClockID, wire.TextRequest{ID: "title", Initial: "Original", Secure: secure})
+				m.Editor.Insert(" draft")
+				switch overlay {
+				case "notifications":
+					m.OpenNotifications()
+				case "switcher":
+					m.OpenSwitcher()
+				case "accessibility":
+					m.OpenAccessibility()
+				}
+				app, result := m.TakeTextResult()
+				if app != wire.ClockID || result == nil || !result.Canceled || result.Value != "" {
+					t.Fatal("missing safe canceled result", app, result)
+				}
+				if !m.Back() || m.Page != Clock || m.EditorAppID != "" || m.EditorRequestID != "" {
+					t.Fatal("Back restored completed editor ownership", m.Page, m.EditorAppID, m.EditorRequestID)
+				}
+				m.finishEditor(true)
+				if _, result := m.TakeTextResult(); result != nil {
+					t.Fatal("completed request emitted a second result", result)
+				}
+			})
+		}
 	}
 }
 func TestAppearanceRecolorsAllShellViews(t *testing.T) {

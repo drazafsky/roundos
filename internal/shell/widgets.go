@@ -62,12 +62,12 @@ func (m *Model) syncNavigation(page int) {
 	for _, f := range frames {
 		if s, ok := findScreen(v, f.ScreenID); ok {
 			i := findFocus(s, f.FocusID)
-			if f.FocusID == "__back" && len(valid) > 0 {
+			if f.FocusID == "__back" && (len(valid) > 0 || circleui.First(s.Widgets) < 0) {
 				// Preserve nested-screen Back focus after live app updates.
 			} else if i >= 0 {
 				f.FocusID = s.Widgets[i].ID
 			} else {
-				f.FocusID = ""
+				f.FocusID = "__back"
 			}
 			if f.Scroll < 0 {
 				f.Scroll = 0
@@ -85,6 +85,8 @@ func (m *Model) syncNavigation(page int) {
 		valid = []NavFrame{{ScreenID: v.Screens[0].ID}}
 		if i := circleui.First(v.Screens[0].Widgets); i >= 0 {
 			valid[0].FocusID = v.Screens[0].Widgets[i].ID
+		} else {
+			valid[0].FocusID = "__back"
 		}
 	}
 	m.AppStacks[page] = valid
@@ -251,8 +253,8 @@ func (m *Model) WidgetTap(x, y int) (bool, string) {
 		return false, ""
 	}
 	// The Back affordance uses exactly the same rectangle for draw and touch.
-	if len(m.AppStacks[m.Page]) > 1 && circleui.BackRect().Hit(x, y) {
-		return m.backAppScreen(), ""
+	if (len(m.AppStacks[m.Page]) > 1 || f.FocusID == "__back") && circleui.BackRect().Hit(x, y) {
+		return m.Back(), ""
 	}
 	rows := m.visibleWidgets()
 	i := circleui.Hit(rows, x, y)
@@ -484,7 +486,8 @@ func drawWidgetScreen(im *image.RGBA, m *Model) {
 	}
 	p := m.Appearance.Palette()
 	stack := m.AppStacks[m.Page]
-	if len(stack) > 1 {
+	hasBack := len(stack) > 1 || m.CurrentFocus(m.Page) == -2
+	if hasBack {
 		back := circleui.BackRect()
 		rect(im, back.Left, back.Top, back.Right, back.Bottom, p.Surface)
 		if stack[len(stack)-1].FocusID == "__back" {
@@ -496,7 +499,7 @@ func drawWidgetScreen(im *image.RGBA, m *Model) {
 	if title == "" {
 		title = "APPLICATION"
 	}
-	if len(stack) > 1 && len(title) > 10 {
+	if hasBack && len(title) > 10 {
 		words := strings.Fields(strings.ToUpper(title))
 		if len(words) > 1 {
 			textTheme(im, 240, 86, 3, words[0], p.PrimaryText, true, m.Appearance)

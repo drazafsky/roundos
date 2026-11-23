@@ -40,6 +40,7 @@ type Model struct {
 	LastTouch               image.Point
 	TouchUntil              time.Time
 	Contacts                []touch.Contact
+	InputRevision           uint64 // changes when an active view changes touch targets
 	LastGesture             string
 	SupportedContacts       int // configured/verified hardware profile; not the decoder limit
 	Notices                 []notify.Item
@@ -170,9 +171,23 @@ func (m *Model) Select(page int) bool {
 		m.WiFi.EditorPurpose = ""
 		if m.Editor.Secure {
 			m.Editor.ClearSensitive()
-			if m.EditorAppID != "" && m.PendingEditorResult == nil {
+		}
+		if m.EditorAppID != "" {
+			if m.PendingEditorResult == nil {
 				m.PendingEditorResult = &wire.TextResult{ID: m.EditorRequestID, Canceled: true}
 				m.PendingEditorApp = m.EditorAppID
+				m.Editor.Cancel()
+			}
+			// The result already owns its routing IDs. A saved shell return
+			// path must not resurrect this completed app editor request.
+			m.EditorAppID, m.EditorRequestID = "", ""
+			for i, parent := range m.ShellParents {
+				if parent == TextEditor || parent == DiscardPrompt {
+					m.ShellParents[i] = m.EditorParent
+				}
+			}
+			if m.AccessParent == TextEditor || m.AccessParent == DiscardPrompt {
+				m.AccessParent = m.EditorParent
 			}
 		}
 	}
@@ -200,9 +215,19 @@ func (m *Model) SetView(id string, v wire.View) bool {
 	if ok && reflect.DeepEqual(old, v) && status == "" {
 		return false
 	}
+	beforeScreen, hadScreen := m.CurrentScreen(page)
+	m.reconcileReplacement(page, old, v)
 	m.Views[page] = wire.CopyView(v)
 	m.syncNavigation(page)
 	if m.Page == page {
+		afterScreen, hasScreen := m.CurrentScreen(page)
+		if hadScreen != hasScreen || beforeScreen.ID != afterScreen.ID {
+			// Removing a parent can drop an otherwise unchanged child from
+			// the navigation stack. Its input and edits belong to that child.
+			m.cancelReloadContact()
+			m.cancelPicker()
+			m.cancelWidgetEdit()
+		}
 		m.syncDialog(page)
 	}
 	m.Status[page] = ""

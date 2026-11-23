@@ -1,5 +1,5 @@
-// roundui is the offline RUI v1 developer toolchain. No shell service, DRM
-// device, IPC socket or installed application is touched by any command.
+// roundui provides offline RUI tooling and explicit compiled-layout development
+// delivery. Development commands never install code or activate a service.
 package main
 
 import (
@@ -25,8 +25,9 @@ Usage:
   roundui compile [-o layout.rui.bin] [-go ids.go] [-package main] <layout.rui.yaml>
   roundui inspect [-json] <layout.rui.yaml|layout.rui.bin>
   roundui preview [-o preview.png] [-screen screen.id] [-theme dark|light|contrast] [-values sample.json] <layout.rui.yaml|layout.rui.bin>
+  roundui dev <layout.rui.yaml> -session /private/session.json [-ssh user@host] [-remote-tool /path/roundui] [-sudo-user app-user]
 
-The preview uses the unmodified RoundOS 0.5.0 v7 circular renderer and
+The preview uses the existing v7 shell circular renderer and
 inert sample state; its form/detail/list template refinements await M5.
 `
 
@@ -37,6 +38,9 @@ func main() {
 	}
 }
 func run(args []string, stdout io.Writer) error {
+	if len(args) > 0 && (args[0] == "dev" || args[0] == "dev-agent") {
+		return runDevCommand(args[0], args[1:], os.Stdin, stdout)
+	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(stdout, usage)
 		return nil

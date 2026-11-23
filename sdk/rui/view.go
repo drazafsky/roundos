@@ -17,6 +17,17 @@ import (
 // Getters are invoked only by the calling application's Flush goroutine.
 type stateSnapshot map[string]binding
 
+func (r *Runtime) publish(view ui.View) error {
+	if err := r.publisher.Publish(view); err != nil {
+		return err
+	}
+	copy := wire.CopyView(view)
+	r.mu.Lock()
+	r.lastView = &copy
+	r.mu.Unlock()
+	return nil
+}
+
 func (s stateSnapshot) text(v spec.Value[string], max int) (string, error) {
 	if !v.Bound {
 		return v.Literal, nil
@@ -65,6 +76,10 @@ func headingID(screen, group string) string {
 // buildView lowers fully resolved RUI into the existing v7 shell view model.
 // All geometry, colors, focus, navigation and hit testing stay in the shell.
 func buildView(f *bundle.File, states stateSnapshot, dialogID string) (ui.View, error) {
+	return buildViewWithVisibility(f, states, dialogID, false)
+}
+
+func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID string, includeHidden bool) (ui.View, error) {
 	v := ui.View{Title: strings.ToUpper(f.Document.Application.ID)}
 	for _, screen := range f.Document.Screens {
 		title, err := states.text(screen.Title, 80)
@@ -91,7 +106,7 @@ func buildView(f *bundle.File, states stateSnapshot, dialogID string) (ui.View, 
 				sc.Widgets = append(sc.Widgets, ui.Widget{ID: headingID(screen.ID, group.ID), Kind: "label", Label: t})
 			}
 			for _, w := range group.Widgets {
-				if w.VisibleWhen != nil {
+				if w.VisibleWhen != nil && !includeHidden {
 					show, e := states.boolean(*w.VisibleWhen)
 					if e != nil {
 						return v, e
@@ -190,15 +205,11 @@ func buildView(f *bundle.File, states stateSnapshot, dialogID string) (ui.View, 
 				continue
 			}
 			found = true
-			title, err := states.text(d.Title, 80)
+			var err error
+			v.Dialog, err = resolveDialog(d, states)
 			if err != nil {
 				return v, err
 			}
-			body, err := states.optText(d.Body, 240)
-			if err != nil {
-				return v, err
-			}
-			v.Dialog = &ui.Dialog{ID: d.ID, Title: title, Body: body, Confirm: d.ConfirmLabel, Cancel: d.CancelLabel, ConfirmAction: d.OnConfirm, CancelAction: d.OnCancel, Destructive: d.Destructive}
 			break
 		}
 		if !found {
@@ -216,4 +227,16 @@ func buildView(f *bundle.File, states stateSnapshot, dialogID string) (ui.View, 
 		return v, fmt.Errorf("RUI view exceeds %d-byte IPC frame (%d bytes)", wire.MaxMessage, len(b))
 	}
 	return v, nil
+}
+
+func resolveDialog(d spec.Dialog, states stateSnapshot) (*ui.Dialog, error) {
+	title, err := states.text(d.Title, 80)
+	if err != nil {
+		return nil, err
+	}
+	body, err := states.optText(d.Body, 240)
+	if err != nil {
+		return nil, err
+	}
+	return &ui.Dialog{ID: d.ID, Title: title, Body: body, Confirm: d.ConfirmLabel, Cancel: d.CancelLabel, ConfirmAction: d.OnConfirm, CancelAction: d.OnCancel, Destructive: d.Destructive}, nil
 }

@@ -39,6 +39,9 @@ type ActionEvent struct {
 	Delta int
 }
 type intRange struct{ min, max int }
+
+const maxDialogContracts = 1024
+
 type boolSource struct {
 	binding string
 	literal bool
@@ -59,8 +62,11 @@ type Runtime struct {
 	intActions             map[string]intRange
 	boolActions            map[string]boolSource
 	dialogActions          map[string][2]string
+	boolContracts          map[string]boolSource
+	dialogContracts        map[string][2]string
 	dialogID               string
 	dialogNeedsClear       bool
+	lastView               *ui.View
 	visible, dirty, sealed bool
 }
 
@@ -125,6 +131,22 @@ func NewForApp(p Publisher, data []byte, expectedAppID string) (*Runtime, error)
 	}
 	for _, d := range f.Document.Dialogs {
 		r.dialogActions[d.ID] = [2]string{d.OnConfirm, d.OnCancel}
+	}
+	if os.Getenv("ROUNDOS_RUI_DEV_DIR") != "" {
+		if tracker, ok := p.(interface{ TrackEditorResults() }); ok {
+			tracker.TrackEditorResults()
+		}
+	}
+	r.boolContracts = make(map[string]boolSource, len(r.boolActions))
+	for action, source := range r.boolActions {
+		r.boolContracts[action] = source
+	}
+	r.dialogContracts = make(map[string][2]string, len(r.dialogActions))
+	if len(r.dialogActions) > maxDialogContracts {
+		return nil, fmt.Errorf("too many dialog identities")
+	}
+	for id, actions := range r.dialogActions {
+		r.dialogContracts[id] = actions
 	}
 	return r, nil
 }
@@ -239,7 +261,9 @@ func (r *Runtime) Invalidate(keys ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, k := range keys {
-		if _, ok := r.file.Manifest.Bindings[k]; !ok {
+		_, declared := r.file.Manifest.Bindings[k]
+		_, registered := r.bindings[k]
+		if !declared && !registered {
 			return fmt.Errorf("undeclared invalidation key %q", k)
 		}
 	}
@@ -278,6 +302,12 @@ func (r *Runtime) Dispatch(ev app.Event) (bool, error) {
 	return r.DispatchContext(context.Background(), ev)
 }
 func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, error) {
+	if ev.Type == "text_result" && ev.TextResult != nil {
+		if tracker, ok := r.publisher.(interface{ AcknowledgeTextResult(string) }); ok {
+			tracker.AcknowledgeTextResult(ev.TextResult.ID)
+		}
+		return false, nil
+	}
 	if ev.Type == "visibility" {
 		r.mu.Lock()
 		r.visible = ev.Visible
@@ -296,9 +326,22 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 		return false, fmt.Errorf("RUI registrations must be validated before dispatch")
 	}
 	h, ok := r.handlers[ev.Action]
+	declared := false
+	for _, action := range r.file.Manifest.Actions {
+		if action.Name == ev.Action {
+			declared = true
+			break
+		}
+	}
 	if !ok {
 		r.mu.Unlock()
 		return false, nil
+	}
+	if !declared {
+		// Retained registrations remain owned by RUI after layout removal.
+		// Consume delayed input so a caller's legacy fallback cannot run it.
+		r.mu.Unlock()
+		return true, nil
 	}
 	rg := r.intActions[ev.Action]
 	bs := r.boolActions[ev.Action]
@@ -366,10 +409,10 @@ func (r *Runtime) Flush() error {
 		// reopens the same declaration, before the client can deduplicate it.
 		cleared := v
 		cleared.Dialog = nil
-		err = r.publisher.Publish(cleared)
+		err = r.publish(cleared)
 	}
 	if err == nil {
-		err = r.publisher.Publish(v)
+		err = r.publish(v)
 	}
 	if err != nil {
 		r.mu.Lock()

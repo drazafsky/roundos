@@ -394,6 +394,69 @@ func TestInstallerProcessLockAndInterruptedDownloadCleanup(t *testing.T) {
 	}
 }
 
+func TestInstallerHelperRestartReclaimsDownloadBeforeRecordingFailure(t *testing.T) {
+	i, c, release := installerFixture(t)
+	if _, err := i.Request(context.Background(), release); err != nil {
+		t.Fatal(err)
+	}
+	var abandoned string
+	i.stage = func(context.Context, Release, string) (*Package, error) {
+		if err := prepareCache(i.cache); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		abandoned, err = os.MkdirTemp(i.cache, ".download-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(abandoned, "partial"), []byte("partial download"), 0600)
+		panic("helper killed while downloading")
+	}
+	func() { defer func() { recover() }(); i.RunPending(context.Background()) }()
+	if abandoned == "" {
+		t.Fatal("simulated interrupted download did not create its stage")
+	}
+	if status, err := i.ReadStatus(); err != nil || status.Phase != "preparing" {
+		t.Fatalf("fault did not interrupt preparation: %+v, %v", status, err)
+	}
+	i.writeState = func(file string, value any) error {
+		if _, err := os.Stat(abandoned); err == nil {
+			return errors.New("no space left while abandoned download exists")
+		}
+		return writeInstallJSON(file, value)
+	}
+	if err := i.RunPending(context.Background()); err != nil {
+		t.Fatalf("helper restart could not settle interrupted download: %v", err)
+	}
+	if status, err := i.ReadStatus(); err != nil || status.Phase != "failed" {
+		t.Fatalf("interrupted download remained queued: %+v, %v", status, err)
+	}
+	if !c.active || strings.Contains(strings.Join(c.log, "\n"), "systemctl stop") {
+		t.Fatal("download cleanup interrupted the installed shell")
+	}
+}
+
+func TestInstallerRequestReclaimsOnlyAbandonedDownloads(t *testing.T) {
+	i, _, release := installerFixture(t)
+	if err := prepareCache(i.cache); err != nil {
+		t.Fatal(err)
+	}
+	abandoned := filepath.Join(i.cache, ".download-interrupted")
+	os.Mkdir(abandoned, 0700)
+	os.WriteFile(filepath.Join(abandoned, "partial"), []byte("partial"), 0600)
+	keep := filepath.Join(i.cache, "diagnostic.txt")
+	os.WriteFile(keep, []byte("keep"), 0600)
+	if status, err := i.Request(context.Background(), release); err != nil || status.Phase != "queued" {
+		t.Fatalf("explicit retry could not queue: %+v, %v", status, err)
+	}
+	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
+		t.Fatal("explicit retry retained abandoned download")
+	}
+	if data, err := os.ReadFile(keep); err != nil || string(data) != "keep" {
+		t.Fatal("cleanup removed unrelated cache data")
+	}
+}
+
 func TestInstallerRollbackDoesNotExecuteOrRequireOlderPrevious(t *testing.T) {
 	i, c, r := installerFixture(t)
 	previous := filepath.Join(i.root, "releases", "0.4.0")
@@ -748,6 +811,13 @@ func TestInstallerRecoveryRemovesItsInterruptedReleaseCopy(t *testing.T) {
 func TestInstallerDoesNotAutomaticallyReplayRecoveryRequiredTransaction(t *testing.T) {
 	i, c, r := installerFixture(t)
 	i.Request(context.Background(), r)
+	if err := prepareCache(i.cache); err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(i.cache, ".download-needs-attention")
+	if err := os.Mkdir(stage, 0700); err != nil {
+		t.Fatal(err)
+	}
 	var transaction installTransaction
 	readInstallJSON(i.transactionFile(), &transaction)
 	if err := i.phase(&transaction, "recovery_required", "SSH required"); err != nil {
@@ -756,5 +826,8 @@ func TestInstallerDoesNotAutomaticallyReplayRecoveryRequiredTransaction(t *testi
 	before := len(c.log)
 	if err := i.RunPending(context.Background()); err != nil || len(c.log) != before {
 		t.Fatal("helper restart attempted an unsafe automatic recovery")
+	}
+	if _, err := os.Stat(stage); err != nil {
+		t.Fatal("helper cleanup raced an unresolved recovery transaction")
 	}
 }

@@ -299,6 +299,9 @@ func (i *Installer) Request(ctx context.Context, release Release) (InstallStatus
 	if err := i.managedShell(ctx); err != nil {
 		return status, err
 	}
+	// Reclaim a prior interrupted download before allocating another journal
+	// or package. A full cache must not prevent an explicit retry from queuing.
+	i.cleanAbandonedDownloads()
 	current, err := i.preflight(ctx)
 	if err != nil {
 		return status, err
@@ -385,6 +388,11 @@ func (i *Installer) RunPending(ctx context.Context) error {
 	}
 	if err := validateInstallStatus(transaction.Status); err != nil {
 		return err
+	}
+	if transaction.Status.Phase != "recovery_required" {
+		// A systemd helper restart can recover without rebooting. Reclaim
+		// downloads before writing its interrupted-preparation outcome.
+		i.cleanAbandonedDownloads()
 	}
 	if transaction.Status.Phase != "queued" {
 		if transaction.Status.InProgress() {
@@ -557,9 +565,7 @@ func (i *Installer) Recover(ctx context.Context) error {
 		return err
 	}
 	defer lock.Close()
-	if err := i.cleanupStages(); err != nil {
-		fmt.Fprintf(os.Stderr, "RoundOS recovery could not clean abandoned downloads: %v\n", err)
-	}
+	i.cleanAbandonedDownloads()
 	var transaction installTransaction
 	if err := readInstallJSON(i.transactionFile(), &transaction); errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -791,6 +797,12 @@ func (i *Installer) commitController(ctx context.Context, transaction *installTr
 	}
 	_, err := i.commands.Run(ctx, "/usr/bin/systemctl", "daemon-reload")
 	return err
+}
+
+func (i *Installer) cleanAbandonedDownloads() {
+	if err := i.cleanupStages(); err != nil {
+		fmt.Fprintf(os.Stderr, "RoundOS updater could not clean abandoned downloads: %v\n", err)
+	}
 }
 
 // Only this installer uses the private cache, and callers hold its process lock.

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"roundos/internal/circleui"
 	"roundos/internal/gesture"
 	"roundos/internal/touch"
 	"roundos/internal/wire"
@@ -154,5 +155,32 @@ func TestReloadRevealsRetainedFocusAfterReordering(t *testing.T) {
 	}
 	if _, action := m.ActivateWidget(); action != "a" {
 		t.Fatal("stable focused action lost", action)
+	}
+}
+
+func TestReloadRootBackFallbackIsVisibleAndWorksWithTouchAndEncoder(t *testing.T) {
+	for _, touch := range []bool{false, true} {
+		m := New()
+		view := ui.View{Screens: []ui.ScreenSpec{ui.Screen("root", "Root", "", "", ui.Button("a", "Action", "a"))}}
+		m.SetView(wire.ClockID, view)
+		m.Select(Clock)
+		before := Draw(m, time.Unix(0, 0))
+		view.Screens[0].Widgets[0].Disabled = true
+		m.SetView(wire.ClockID, view)
+		after := Draw(m, time.Unix(0, 0))
+		back := circleui.BackRect()
+		if before.RGBAAt(back.Left+2, back.Top+2) == after.RGBAAt(back.Left+2, back.Top+2) {
+			t.Fatal("root Back fallback not rendered")
+		}
+		var changed bool
+		var action string
+		if touch {
+			changed, action = m.WidgetTap((back.Left+back.Right)/2, (back.Top+back.Bottom)/2)
+		} else {
+			changed, action = m.ActivateWidget()
+		}
+		if !changed || action != "" || m.Page != Home {
+			t.Fatal("root Back input did not return Home", touch, changed, action, m.Page)
+		}
 	}
 }

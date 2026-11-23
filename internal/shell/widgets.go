@@ -253,8 +253,8 @@ func (m *Model) WidgetTap(x, y int) (bool, string) {
 		return false, ""
 	}
 	// The Back affordance uses exactly the same rectangle for draw and touch.
-	if len(m.AppStacks[m.Page]) > 1 && circleui.BackRect().Hit(x, y) {
-		return m.backAppScreen(), ""
+	if (len(m.AppStacks[m.Page]) > 1 || f.FocusID == "__back") && circleui.BackRect().Hit(x, y) {
+		return m.Back(), ""
 	}
 	rows := m.visibleWidgets()
 	i := circleui.Hit(rows, x, y)
@@ -486,7 +486,8 @@ func drawWidgetScreen(im *image.RGBA, m *Model) {
 	}
 	p := m.Appearance.Palette()
 	stack := m.AppStacks[m.Page]
-	if len(stack) > 1 {
+	hasBack := len(stack) > 1 || m.CurrentFocus(m.Page) == -2
+	if hasBack {
 		back := circleui.BackRect()
 		rect(im, back.Left, back.Top, back.Right, back.Bottom, p.Surface)
 		if stack[len(stack)-1].FocusID == "__back" {
@@ -498,7 +499,7 @@ func drawWidgetScreen(im *image.RGBA, m *Model) {
 	if title == "" {
 		title = "APPLICATION"
 	}
-	if len(stack) > 1 && len(title) > 10 {
+	if hasBack && len(title) > 10 {
 		words := strings.Fields(strings.ToUpper(title))
 		if len(words) > 1 {
 			textTheme(im, 240, 86, 3, words[0], p.PrimaryText, true, m.Appearance)

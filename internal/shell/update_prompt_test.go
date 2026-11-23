@@ -324,6 +324,17 @@ func TestUpdatePromptWaitsForBannerAndKeepsNotesReadable(t *testing.T) {
 	}
 }
 
+func TestExpiredBannerCannotStrandPromptAfterDisplaySleep(t *testing.T) {
+	m := New()
+	m.Select(Clock)
+	m.Banner = &notify.Item{ID: 1}
+	m.BannerUntil = time.Now().Add(-time.Minute)
+	m.SetUpdateStatus(availableStatus(1, "0.6.0", "", false, ""))
+	if !m.MaybePromptUpdate() || m.Banner != nil || m.Page != UpdatePrompt {
+		t.Fatal("expired banner stranded a queued update after a missed expiry timer")
+	}
+}
+
 func TestMissingNotesWrappingAndAppearanceReflow(t *testing.T) {
 	m := New()
 	m.SetUpdateStatus(availableStatus(1, "0.6.0", "", true, ""))

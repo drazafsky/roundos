@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"strings"
+	"time"
 	"unicode"
 
 	"roundos/internal/update"
@@ -59,6 +60,11 @@ func (m *Model) observeUpdateResult(status update.Status) {
 // MaybePromptUpdate is called from the UI event loop after navigation. Deferring
 // editors, pickers, app dialogs and critical alerts preserves their interaction.
 func (m *Model) MaybePromptUpdate() bool {
+	// The display may have slept through the banner expiry timer. Retire
+	// expired banners before deciding whether a queued prompt can appear.
+	if m.Updates.PendingRelease != nil {
+		m.BannerExpired(time.Now())
+	}
 	if m.Updates.PendingRelease == nil || m.Page == TextEditor || m.Page == DiscardPrompt || m.Page == WiFiConfirm ||
 		m.Page == Accessibility || m.Page == Switcher || m.Page == NotificationCenter || m.Page == NotificationDetail ||
 		m.updatePromptInNavigation() || m.PickerID != "" || m.hasVisibleDialog() || m.HasCritical() || m.Banner != nil || m.EditingWidget != "" {

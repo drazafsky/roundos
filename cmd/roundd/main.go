@@ -713,6 +713,9 @@ func main() {
 			if status.CommandErr != nil {
 				log.Printf("update installation request: %v", status.CommandErr)
 			}
+			if status.Ready && !status.Supported && status.UnsupportedReason != "" && !status.Status.InProgress() {
+				log.Printf("update installation unavailable: %s", status.UnsupportedReason)
+			}
 			changed := model.SetInstallationStatus(status)
 			if status.Status.ID != "" && status.Status.ID != reportedInstallation && !status.Status.InProgress() {
 				reportedInstallation = status.Status.ID

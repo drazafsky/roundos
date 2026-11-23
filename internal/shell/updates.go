@@ -302,6 +302,9 @@ func (m *Model) installationDisabledReason() string {
 	if !s.Ready {
 		return "CHECKING INSTALL SUPPORT"
 	}
+	if !s.Supported && s.UnsupportedReason != "" {
+		return "INSTALL NEEDS A MANAGED DEVICE"
+	}
 	if s.Err != nil {
 		return "UPDATE STATUS UNAVAILABLE"
 	}
@@ -312,6 +315,9 @@ func (m *Model) installationSummary() string {
 	s := m.Updates.Installation
 	if s.Status.Phase == "recovery_required" {
 		return "UPDATE NEEDS SSH"
+	}
+	if s.Err != nil && (s.Status.ID != "" || s.Supported) {
+		return "UPDATE STATUS ERROR"
 	}
 	if s.Status.InProgress() {
 		switch s.Status.Phase {
@@ -331,9 +337,6 @@ func (m *Model) installationSummary() string {
 	}
 	if m.installationCommandErrorRelevant() {
 		return "UPDATE START FAILED"
-	}
-	if s.Err != nil && (s.Status.ID != "" || s.Supported) {
-		return "UPDATE STATUS ERROR"
 	}
 	switch s.Status.Phase {
 	case "queued", "preparing":
@@ -357,6 +360,9 @@ func (m *Model) installationMessage() string {
 	if s.Status.Phase == "recovery_required" {
 		return "UPDATE NEEDS SSH RECOVERY"
 	}
+	if s.Err != nil && (s.Status.ID != "" || s.Supported) {
+		return "UPDATE STATUS UNAVAILABLE - USE SSH"
+	}
 	if s.Status.InProgress() {
 		switch s.Status.Phase {
 		case "queued", "preparing":
@@ -375,9 +381,6 @@ func (m *Model) installationMessage() string {
 	}
 	if m.installationCommandErrorRelevant() {
 		return "COULD NOT START UPDATE - TRY AGAIN"
-	}
-	if s.Err != nil && (s.Status.ID != "" || s.Supported) {
-		return "UPDATE STATUS UNAVAILABLE - USE SSH"
 	}
 	switch s.Status.Phase {
 	case "queued", "preparing":

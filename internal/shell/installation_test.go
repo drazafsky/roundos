@@ -136,3 +136,26 @@ func TestAcceptedTransactionProgressAndOutcomeOverrideLaunchError(t *testing.T) 
 		t.Fatal("unrelated earlier success hid a failed new request")
 	}
 }
+
+func TestHistoricalInstallOutcomeDoesNotLabelANewPromptAsInstalled(t *testing.T) {
+	m := New()
+	m.SetInstallationStatus(update.InstallationState{Ready: true, Supported: true, Status: update.InstallStatus{ID: "previous", Version: "0.6.0", Phase: "succeeded"}})
+	m.SetUpdateStatus(availableStatus(1, "0.6.0", "", false, ""))
+	m.MaybePromptUpdate()
+	if m.updatePromptMessage() != "" {
+		t.Fatal("historic install labelled a newly offered release as installed")
+	}
+	m.Updates.PromptFocus = 1
+	m.UpdatePromptActivate()
+	if m.updatePromptMessage() != "PREPARING UPDATE" {
+		t.Fatal("new explicit installation did not show its own progress")
+	}
+}
+
+func TestInstallationReadErrorDoesNotPretendCachedProgressIsCurrent(t *testing.T) {
+	m := New()
+	m.SetInstallationStatus(update.InstallationState{Ready: true, Supported: true, Err: errors.New("state read failed"), Status: update.InstallStatus{ID: "transaction", Version: "0.6.0", Phase: "starting"}})
+	if !strings.Contains(m.installationMessage(), "UNAVAILABLE") || m.installationSummary() != "UPDATE STATUS ERROR" {
+		t.Fatal("unreadable status was presented as current progress")
+	}
+}

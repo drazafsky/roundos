@@ -301,12 +301,7 @@ func (m *Model) DrawUpdatePrompt(im *image.RGBA) {
 	if m.Updates.Notice != nil {
 		textTheme(im, 240, 116, 2, strings.ToUpper(m.Updates.Notice.Version), p.PrimaryText, true, m.Appearance)
 	}
-	message := m.Updates.Message
-	if m.Updates.Notice != nil && (m.Updates.Installation.Status.Version == m.Updates.Notice.Version || m.Updates.InstallRequestVersion == m.Updates.Notice.Version) {
-		if install := m.installationMessage(); install != "" {
-			message = install
-		}
-	}
+	message := m.updatePromptMessage()
 	if message != "" {
 		textTheme(im, 240, 143, 1, message, p.Warning, true, m.Appearance)
 	}
@@ -339,6 +334,15 @@ func (m *Model) DrawUpdatePrompt(im *image.RGBA) {
 		textTheme(im, 240, y+6, 2, label, color, true, m.Appearance)
 		textTheme(im, 240, y+30, 1, details[i], p.SecondaryText, true, m.Appearance)
 	}
+}
+
+func (m *Model) updatePromptMessage() string {
+	if m.Updates.Notice != nil && m.Updates.InstallRequestVersion == m.Updates.Notice.Version {
+		if message := m.installationMessage(); message != "" {
+			return message
+		}
+	}
+	return m.Updates.Message
 }
 
 func (m *Model) DrawReleaseNotes(im *image.RGBA) {

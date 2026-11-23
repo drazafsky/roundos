@@ -1,0 +1,210 @@
+"""Synthetic unit fixtures exercise gate decisions; they are not Pi evidence."""
+import copy
+from datetime import datetime, timedelta, timezone
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import compare as gate
+import bind_session
+
+
+def identity(baseline=False):
+    result = {key: True for key in ('identity_verified', 'reference_pi', 'service_active', 'running_binary_matches',
+                                   'root_owned_regular_binary', 'root_owned_regular_timer', 'release_metadata_matches', 'expected_version_matches')}
+    result.update(version='0.5.0' if baseline else '0.6.0-dev.1.g' + 'a' * 7,
+                  commit=None if baseline else 'a' * 40, binary_sha256='b' * 64,
+                  timer_binary_sha256='c' * 64, device_id_sha256='d' * 64, boot_id='test-boot', service_pid=123)
+    return result
+
+
+def sessions(device):
+    return {name: {'scenario': name, 'accepted_for_m0': True, 'reference_pi_managed': True,
+                   'status': 'COLLECTED', 'target_seconds': 60, 'target_repeats': 3, 'interval_seconds': 1,
+                   'm7_identity': {**{key: device[key] for key in gate.IDENTITY_KEYS}, 'verified': True,
+                                   'raw_sha256': {f'run-{i:02d}.jsonl': 'e' * 64 for i in (1, 2, 3)}},
+                   'runs': [{'run': i, 'complete': True, 'sample': {'records': 60, 'shell_cpu_percent_mean': 10,
+                                                                 'shell_rss_kib_peak': 20000},
+                             'renderer_metrics': [{'input-to-present-p95': '10ms'}]} for i in (1, 2, 3)]}
+            for name in gate.SCENARIOS}
+
+
+class GateTests(unittest.TestCase):
+    def setUp(self):
+        self.old, self.new = identity(True), identity()
+        self.before, self.after = sessions(self.old), sessions(self.new)
+        self.observed = {'candidate_commit': self.new['commit'], 'checks': {
+            key: {'observed': True, 'evidence': 'synthetic unit test only'} for key in gate.OBSERVATIONS},
+            'reload_measurements': [{'method': 'save-gesture-to-visible-frame', 'fps': 60, 'frames': 20}] * 3}
+        self.protocol = {'architecture': 'arm', 'baseline_source_archive_sha256':
+                         '06a1241970b365a4d91fa5bee65561322d155cd79303c08d097bd7035e100c75',
+                         'baseline': {'ticks': 5, 'bytes': 4755},
+                         'candidate': {'ticks': 5, 'bytes': 1385, 'full_trees': 0, 'binary_sha256': self.new['timer_binary_sha256']}}
+
+    def report(self):
+        return gate.compare(self.old, self.new, self.before, self.after, self.observed, self.protocol)
+
+    def test_complete_measurements_still_require_human_review(self):
+        self.assertEqual(self.report()['gate'], 'READY_FOR_HUMAN_REVIEW')
+        self.observed['checks'].pop('candidate_boot_wifi_reconnect')
+        self.assertEqual(self.report()['gate'], 'PENDING')
+
+    def test_missing_and_mismatched_evidence_never_pass(self):
+        for change in ('device', 'commit', 'binding', 'sample', 'duration', 'metrics', 'hashes'):
+            with self.subTest(change=change):
+                self.setUp()
+                if change == 'device': self.new['device_id_sha256'] = 'f' * 64
+                if change == 'commit': self.observed['candidate_commit'] = 'f' * 40
+                entry = self.after['gallery_flick']
+                if change == 'binding': entry['m7_identity']['service_pid'] += 1
+                if change == 'sample': entry['runs'][0]['sample']['shell_cpu_percent_mean'] = float('nan')
+                if change == 'duration': entry['target_seconds'] = 10
+                if change == 'metrics': entry['runs'][0]['renderer_metrics'] = [{'input-to-present-p95': '0s'}]
+                if change == 'hashes': entry['m7_identity']['raw_sha256'] = {}
+                self.assertEqual(self.report()['gate'], 'PENDING')
+
+    def test_each_run_must_meet_latency_cpu_and_memory_limits(self):
+        for scenario, field, value in [('gallery_flick', 'latency', '11.01ms'), ('idle', 'shell_cpu_percent_mean', 11.01),
+                                       ('wifi_scan', 'shell_rss_kib_peak', 28193)]:
+            with self.subTest(field=field):
+                self.setUp()
+                run = self.after[scenario]['runs'][1]
+                if field == 'latency': run['renderer_metrics'][0]['input-to-present-p95'] = value
+                else: run['sample'][field] = value
+                self.assertEqual(self.report()['scenarios'][scenario]['status'], 'FAIL')
+                self.assertEqual(self.report()['gate'], 'FAIL')
+
+    def test_protocol_full_tree_or_traffic_regression_fails(self):
+        for key, value in [('full_trees', 1), ('bytes', 2378)]:
+            self.setUp()
+            self.protocol['candidate'][key] = value
+            self.assertEqual(self.report()['protocol'], 'FAIL')
+        self.protocol['candidate']['binary_sha256'] = 'f' * 64
+        self.assertEqual(self.report()['protocol'], 'PENDING')
+
+    def test_reload_and_reported_functional_failure(self):
+        self.observed['reload_measurements'][0]['frames'] = 30
+        self.assertEqual(self.report()['reload']['status'], 'FAIL')
+        self.setUp()
+        self.observed['checks']['clock_label_pickers_gallery']['observed'] = False
+        self.assertEqual(self.report()['gate'], 'FAIL')
+
+    def test_identity_requires_all_trust_checks_and_exact_candidate_commit(self):
+        for key, value in identity().items():
+            if value is True:
+                changed = identity()
+                changed[key] = False
+                self.assertFalse(gate.valid_identity(changed, False), key)
+        for value in (None, '', 'a' * 7):
+            changed = identity()
+            changed['commit'] = value
+            self.assertFalse(gate.valid_identity(changed, False))
+        self.assertTrue(gate.valid_identity(identity(True), True))
+
+    def test_private_exclusive_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / 'evidence.json'
+            gate.write_new(output, {'gate': 'PENDING'})
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(FileExistsError): gate.write_new(output, {'gate': 'OTHER'})
+            self.assertEqual(json.loads(output.read_text()), {'gate': 'PENDING'})
+
+
+class BindingTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'session.json'
+        self.start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.before, self.after = identity(True), identity(True)
+        self.before['recorded_utc'] = self.start.isoformat()
+        self.after['recorded_utc'] = (self.start + timedelta(seconds=200)).isoformat()
+        self.session = sessions(self.before)['idle']
+        self.session.pop('m7_identity')
+        self.session.update(start_utc=self.before['recorded_utc'], end_utc=self.after['recorded_utc'])
+        for run in self.session['runs']:
+            offset = (run['run'] - 1) * 61
+            run['start_utc'] = (self.start + timedelta(seconds=offset)).isoformat()
+            run['end_utc'] = (self.start + timedelta(seconds=offset + 60.5)).isoformat()
+            records = [{'utc': (self.start + timedelta(seconds=offset + i)).isoformat(), 'elapsed_seconds': i,
+                        'processes': [{'name': 'roundd', 'pid': 123, 'cpu_percent': 2, 'rss_kib': 12345}]} for i in range(1, 61)]
+            (self.path.parent / f'run-{run["run"]:02d}.jsonl').write_text('\n'.join(json.dumps(value) for value in records))
+        self.path.write_text(json.dumps(self.session))
+
+    def test_recalculates_summaries_and_preserves_original(self):
+        original = self.path.read_bytes()
+        bound = bind_session.bind(self.path, self.before, self.after)
+        self.assertEqual(bound['runs'][0]['sample']['shell_cpu_percent_mean'], 2)
+        self.assertEqual(bound['runs'][0]['sample']['shell_rss_kib_peak'], 12345)
+        self.assertEqual(len(bound['m7_identity']['raw_sha256']), 3)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertIsNotNone(gate.session_runs(bound, 'idle', self.before))
+
+    def test_rejects_restart_or_other_process_samples(self):
+        self.after['service_pid'] = 124
+        with self.assertRaises(ValueError): bind_session.bind(self.path, self.before, self.after)
+        self.after['service_pid'] = 123
+        path = self.path.parent / 'run-01.jsonl'
+        path.write_text(path.read_text().replace('"pid": 123', '"pid": 124'))
+        with self.assertRaises(ValueError): bind_session.bind(self.path, self.before, self.after)
+
+    def test_rejects_truncated_and_out_of_window_samples(self):
+        path = self.path.parent / 'run-01.jsonl'
+        records = path.read_text().splitlines()
+        path.write_text('\n'.join(records[:10]))
+        with self.assertRaises(ValueError): bind_session.bind(self.path, self.before, self.after)
+        path.write_text('\n'.join(records))
+        self.before['recorded_utc'] = (self.start + timedelta(seconds=1)).isoformat()
+        with self.assertRaises(ValueError): bind_session.bind(self.path, self.before, self.after)
+
+class IdentityCollectorTests(unittest.TestCase):
+    def test_installed_build_id_identifies_candidate_without_release_json(self):
+        # The installer copies binaries and checksums, not release.json.
+        import identity as collector
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            release = root / 'opt/roundos/releases/test'
+            (release / 'bin').mkdir(parents=True)
+            for name in ('roundd', 'round-timer'):
+                (release / 'bin' / name).write_bytes(b'test binary')
+            (root / 'opt/roundos/current').symlink_to(release)
+            for name, value in [('proc/device-tree/model', 'Raspberry Pi Zero 2 W\0'),
+                                ('proc/sys/kernel/random/boot_id', 'boot'), ('etc/machine-id', 'unit-test-machine')]:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(value)
+            (root / 'proc/123').mkdir(parents=True)
+            os.link(release / 'bin/roundd', root / 'proc/123/exe')
+            def mapped(value):
+                return root / str(value).lstrip('/')
+            def command(args):
+                if args[-1] == '-version': return 'RoundOS 0.6.0-dev.1.gaaaaaaa (' + 'a' * 40 + ')'
+                if args[1] == 'show': return '123'
+                return 'active'
+            original = Path.lstat
+            def owned(path, *args, **kwargs):
+                values = list(original(path, *args, **kwargs))
+                values[4] = 0
+                return os.stat_result(values)
+            with mock.patch.object(collector, 'Path', side_effect=mapped), mock.patch.object(collector, 'command', side_effect=command), mock.patch.object(Path, 'lstat', owned):
+                result = collector.scan('0.6.0-dev.1.gaaaaaaa')
+                self.assertEqual(result['commit'], 'a' * 40)
+                self.assertTrue(result['identity_verified'])
+                (release / 'release.json').write_text(json.dumps({'version': result['version'], 'commit': 'f' * 40}))
+                self.assertFalse(collector.scan(result['version'])['identity_verified'])
+                def untrusted(path, *args, **kwargs):
+                    values = list(owned(path, *args, **kwargs))
+                    if path == release / 'bin/roundd': values[4] = 1000
+                    return os.stat_result(values)
+                with mock.patch.object(Path, 'lstat', untrusted), mock.patch.object(collector, 'command') as execute:
+                    with self.assertRaises(ValueError): collector.scan(result['version'])
+                    execute.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

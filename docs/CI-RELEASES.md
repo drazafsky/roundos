@@ -62,7 +62,7 @@ It does not activate RoundOS or switch the desktop. Follow the managed release
 and systemd rollback documentation for deliberate activation over SSH.
 
 For a native source build, install Go, a C compiler, pkg-config and libdrm-dev,
-then run `sh scripts/build.sh`. This produces a `0.5.1-dev` identity by default.
+then run `sh scripts/build.sh`. This produces the `VERSION` value with a `-dev` suffix by default.
 Automation sets `ROUNDOS_VERSION`, `ROUNDOS_BUILD_ID`, and `ROUNDOS_OUTPUT_DIR`.
 
 ## Merge protection and hardware acceptance

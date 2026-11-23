@@ -1,0 +1,37 @@
+schema: roundos.rui/v1
+application:
+  id: org.example.rui.acceptance
+screens:
+  - id: probe.root
+    title: M7 RELOAD PROBE
+    layout: hero_list
+    hero: { bind: probe.count }
+    subtitle: { bind: probe.status }
+    groups:
+      - id: controls
+        widgets:
+          - id: probe.increment
+            type: button
+            label: INCREMENT
+            variant: primary
+            onPress: increment
+            enabledWhen: { bind: probe.enabled }
+            visibleWhen: { bind: probe.shown }
+          - id: probe.public
+            type: button
+            label: EDIT PUBLIC LABEL
+            onPress: editPublic
+          - id: probe.secret
+            type: button
+            label: SECURE EDITOR
+            onPress: editSecret
+          - id: probe.enabled
+            type: toggle
+            label: ENABLE INCREMENT
+            checked: { bind: probe.enabled }
+            onChange: setEnabled
+          - id: probe.shown
+            type: toggle
+            label: SHOW INCREMENT
+            checked: { bind: probe.shown }
+            onChange: setShown

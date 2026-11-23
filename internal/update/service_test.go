@@ -176,6 +176,30 @@ func TestCommandOutcomeSurvivesLaterCheckPersistenceFailure(t *testing.T) {
 	}
 }
 
+func TestServicePublishesStartupPersistenceFailureUntilSuccessfulWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "updates.json")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path, time.Now())
+	if err == nil {
+		t.Fatal("invalid state path was accepted")
+	}
+	store.state.Preferences.Automatic = false
+	ctx, cancel := context.WithCancel(context.Background())
+	s := Start(ctx, store, nil, "0.5.0", nil)
+	defer func() { cancel(); <-s.Done() }()
+	waitStatus(t, s, func(st Status) bool { return st.PersistenceErr != nil })
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s.Submit(Command{ID: 1, Kind: ChangePreferences, Preferences: store.Snapshot().Preferences})
+	st := waitStatus(t, s, func(st Status) bool { return st.LastCommandID == 1 })
+	if st.PersistenceErr != nil || st.CommandErr != nil {
+		t.Fatalf("successful write did not clear recovery error: %+v", st)
+	}
+}
+
 func TestServiceToggleIntervalAndBusyCoalescing(t *testing.T) {
 	_, clock, client, s, _ := newServiceFixture(t, false)
 	waitStatus(t, s, func(st Status) bool { return !st.Preferences.Automatic })

@@ -388,7 +388,12 @@ func main() {
 	defer presenterLoop.Close() // must happen before display.Close()
 	startup := service.NewStartup(service.NotifyReady)
 	firstFrame := presenterLoop.FirstFrame()
+	var updatesRefreshAt time.Time
 	render := func(inputAt time.Time) {
+		updatesRefreshAt = time.Time{}
+		if model.Page == shell.UpdatesPage {
+			updatesRefreshAt = time.Now().Add(time.Second)
+		}
 		presenterLoop.Submit(model, inputAt)
 	}
 	render(time.Time{})
@@ -541,11 +546,14 @@ func main() {
 	}
 	for {
 		now := time.Now()
+		if !backlightOff && updatesRefreshDue(model.Page, now, updatesRefreshAt) {
+			render(time.Time{})
+		}
 		var timer *time.Timer
 		var alarm <-chan time.Time
 		var next time.Duration
 		if !backlightOff {
-			next = nextWake(model, now)
+			next = nextWake(model, now, updatesRefreshAt)
 			if deadline := gestures.Deadline(); !deadline.IsZero() {
 				delay := deadline.Sub(now)
 				if delay <= 0 {
@@ -907,13 +915,20 @@ func main() {
 	}
 
 }
-func nextWake(m *shell.Model, now time.Time) time.Duration {
+func updatesRefreshDue(page int, now, deadline time.Time) bool {
+	return page == shell.UpdatesPage && (deadline.IsZero() || !now.Before(deadline))
+}
+
+func nextWake(m *shell.Model, now, updatesRefreshAt time.Time) time.Duration {
 	next := m.NextKineticWake(now)
 	if m.Page == shell.Home {
 		next = now.Truncate(time.Minute).Add(time.Minute).Sub(now)
 	}
-	if m.Page == shell.UpdatesPage && (next == 0 || next > time.Second) {
-		next = now.Truncate(time.Second).Add(time.Second).Sub(now)
+	if m.Page == shell.UpdatesPage {
+		delay := max(time.Millisecond, updatesRefreshAt.Sub(now))
+		if next == 0 || delay < next {
+			next = delay
+		}
 	}
 	if m.Banner != nil && m.BannerUntil.After(now) {
 		d := m.BannerUntil.Sub(now)

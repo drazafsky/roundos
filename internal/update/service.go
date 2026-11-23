@@ -39,6 +39,7 @@ type Status struct {
 	LastCommandID  uint64 // identifies the command acknowledged by this snapshot
 	CommandErr     error  // retained outcome of LastCommandID, independent of later checks
 	Preferences    Preferences
+	PersistenceErr error // unresolved state write failure, including startup recovery
 	IgnoredVersion string
 	Busy           bool
 	LastAttempt    time.Time
@@ -175,6 +176,7 @@ func (s *Service) run(ctx context.Context, store *Store, client ReleaseClient, i
 			status.NextAutomatic = next
 			wake = clock.After(max(0, next.Sub(now)))
 		}
+		status.PersistenceErr = store.PersistenceError()
 		s.publish(status)
 		select {
 		case <-ctx.Done():

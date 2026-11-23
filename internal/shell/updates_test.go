@@ -120,6 +120,7 @@ func TestUpdatesMessagesAndSnapshot(t *testing.T) {
 		{update.Status{Err: &update.RateLimitError{}}, "GITHUB RATE LIMIT - PLEASE WAIT"},
 		{update.Status{OperationErr: errors.New("disk full")}, "COULD NOT SAVE UPDATE SETTINGS"},
 		{update.Status{Busy: true, OperationErr: errors.New("disk full")}, "COULD NOT SAVE UPDATE SETTINGS"},
+		{update.Status{PersistenceErr: errors.New("startup recovery failed")}, "COULD NOT SAVE UPDATE SETTINGS"},
 		{update.Status{Busy: true, CommandErr: errors.New("disk full")}, "COULD NOT SAVE UPDATE SETTINGS"},
 		{update.Status{CommandErr: update.ErrBusy, Result: update.CheckResult{Status: update.UpToDate}}, "YOU ARE UP TO DATE"},
 		{update.Status{CommandErr: update.ErrCooldown, Result: update.CheckResult{Status: update.NoStableRelease}}, "NO STABLE RELEASE PUBLISHED"},

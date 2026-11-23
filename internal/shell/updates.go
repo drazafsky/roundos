@@ -144,6 +144,9 @@ func (m *Model) updateMessage() string {
 	if m.Updates.InFlight != 0 {
 		return "PLEASE WAIT"
 	}
+	if status.PersistenceErr != nil {
+		return "COULD NOT SAVE UPDATE SETTINGS"
+	}
 	operationErr := status.CommandErr
 	if operationErr == nil || errors.Is(operationErr, update.ErrBusy) || errors.Is(operationErr, update.ErrCooldown) {
 		operationErr = status.OperationErr

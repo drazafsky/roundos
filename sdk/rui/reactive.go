@@ -90,6 +90,7 @@ func evaluateDirty(f *bundle.File, bindings map[string]binding, previous map[str
 	}
 	affected := map[int]bool{}
 	failed := map[string]bool{}
+	var changedInts map[string]bool
 	var errs []error
 	var names []string
 	for key := range f.Manifest.Bindings {
@@ -112,6 +113,12 @@ func evaluateDirty(f *bundle.File, bindings map[string]binding, previous map[str
 		}
 		values[key] = value
 		if !cached || value != old {
+			if value.typ == spec.IntBinding {
+				if changedInts == nil {
+					changedInts = map[string]bool{}
+				}
+				changedInts[key] = true
+			}
 			for _, dep := range f.Dependencies[key] {
 				if dep.Screen >= 0 {
 					affected[dep.Screen] = true
@@ -119,7 +126,7 @@ func evaluateDirty(f *bundle.File, bindings map[string]binding, previous map[str
 			}
 		}
 	}
-	if err := validateResolvedRanges(f, previous, values, failed); err != nil {
+	if err := validateResolvedRanges(f, previous, values, failed, changedInts); err != nil {
 		errs = append(errs, err)
 	}
 	return values, affected, failed, errors.Join(errs...)
@@ -128,7 +135,10 @@ func evaluateDirty(f *bundle.File, bindings map[string]binding, previous map[str
 // Range/value bindings form one consistency unit. Reject that unit together
 // while retaining unrelated valid updates. Repeating reaches a fixed point
 // when a shared binding participates in more than one control's range.
-func validateResolvedRanges(f *bundle.File, previous, values map[string]boundValue, failed map[string]bool) error {
+func validateResolvedRanges(f *bundle.File, previous, values map[string]boundValue, failed, changedInts map[string]bool) error {
+	if len(changedInts) == 0 {
+		return nil
+	}
 	var errs []error
 	for {
 		changed := false
@@ -138,10 +148,17 @@ func validateResolvedRanges(f *bundle.File, previous, values map[string]boundVal
 					if w.Value == nil || (w.MinBinding == "" && w.MaxBinding == "") {
 						continue
 					}
-					states := frozenSnapshot(values)
-					low, high, err := states.widgetRange(w)
-					value, valueErr := states.integer(*w.Value)
-					if err != nil || valueErr != nil {
+					if !changedInts[w.MinBinding] && !changedInts[w.MaxBinding] && (!w.Value.Bound || !changedInts[w.Value.Binding]) {
+						continue
+					}
+					low, lowOK := cachedRangeEndpoint(w.Min, w.MinBinding, values)
+					high, highOK := cachedRangeEndpoint(w.Max, w.MaxBinding, values)
+					value, valueOK := w.Value.Literal, true
+					if w.Value.Bound {
+						cached, ok := values[w.Value.Binding]
+						value, valueOK = cached.integer, ok && cached.typ == spec.IntBinding
+					}
+					if !lowOK || !highOK || !valueOK {
 						continue
 					}
 					if low < high && value >= low && value <= high {
@@ -178,6 +195,14 @@ func validateResolvedRanges(f *bundle.File, previous, values map[string]boundVal
 			return errors.Join(errs...)
 		}
 	}
+}
+
+func cachedRangeEndpoint(literal *int, key string, values map[string]boundValue) (int, bool) {
+	if literal != nil {
+		return *literal, true
+	}
+	value, ok := values[key]
+	return value.integer, ok && value.typ == spec.IntBinding
 }
 
 func frozenSnapshot(values map[string]boundValue) stateSnapshot {

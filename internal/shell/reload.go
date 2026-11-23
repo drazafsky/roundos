@@ -38,7 +38,7 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 		}
 		if w, nextIndex, ok := widgetByID(after, frames[i].FocusID); ok && circleui.Focusable(w) {
 			_, oldIndex, existed := widgetByID(before, frames[i].FocusID)
-			if !existed || oldIndex != nextIndex || (before.Hero == "") != (after.Hero == "") {
+			if !existed || oldIndex != nextIndex || before.Layout != after.Layout || (before.Hero == "") != (after.Hero == "") {
 				m.revealReloadFocus(&frames[i], after, nextIndex)
 			}
 			continue
@@ -99,7 +99,7 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 	if !compatible(m.EditingWidget) || !compatible(m.TouchSlider) {
 		m.cancelWidgetEdit()
 	}
-	changed := !okBefore || !okAfter || len(before.Widgets) != len(after.Widgets) || before.Hero != "" && after.Hero == "" || before.Hero == "" && after.Hero != ""
+	changed := !okBefore || !okAfter || before.Layout != after.Layout || len(before.Widgets) != len(after.Widgets) || before.Hero != "" && after.Hero == "" || before.Hero == "" && after.Hero != ""
 	if !changed {
 		for i, w := range before.Widgets {
 			if w.ID != after.Widgets[i].ID || !sameInputTarget(w, after.Widgets[i]) {
@@ -114,18 +114,18 @@ func (m *Model) reconcileReplacement(page int, old, next wire.View) {
 }
 
 func (m *Model) revealReloadFocus(frame *NavFrame, screen wire.Screen, index int) {
-	_, _, step, height := circleui.RowMetrics(screen.Hero != "", m.Appearance.LargeTargets)
-	for _, row := range circleui.VisiblePixelAt(screen.Widgets, frame.ScrollPx, screen.Hero != "", m.Appearance.LargeTargets) {
+	_, _, _, height := circleui.ScreenMetrics(screen, m.Appearance.LargeTargets)
+	for _, row := range circleui.VisibleScreenPixelAt(screen, frame.ScrollPx, m.Appearance.LargeTargets) {
 		if row.Index == index && row.Rect.Bottom-row.Rect.Top >= height {
 			return
 		}
 	}
-	frame.Scroll = circleui.ScrollTo(screen.Widgets, index, frame.Scroll, screen.Hero != "", m.Appearance.LargeTargets)
-	frame.ScrollPx = float64(frame.Scroll * step)
+	frame.Scroll = circleui.ScreenScrollTo(screen, index, frame.Scroll, m.Appearance.LargeTargets)
+	frame.ScrollPx = circleui.ScreenRowOffset(screen, frame.Scroll, m.Appearance.LargeTargets)
 }
 
 func sameInputTarget(a, b wire.Widget) bool {
-	return a.Kind == b.Kind && a.Action == b.Action && a.Target == b.Target &&
+	return a.Kind == b.Kind && a.Group == b.Group && a.Action == b.Action && a.Target == b.Target &&
 		a.Disabled == b.Disabled && a.Min == b.Min && a.Max == b.Max && a.Step == b.Step && a.Wrap == b.Wrap
 }
 

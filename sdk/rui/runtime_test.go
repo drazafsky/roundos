@@ -280,8 +280,9 @@ func TestErrorRecoveryBoundsAndConcurrentInvalidation(t *testing.T) {
 	// The publisher triggers invalidation while Flush is still active; a second
 	// publication must occur, rather than dropping the concurrent state change.
 	var once sync.Once
-	pub.before = func() { once.Do(func() { _ = r.Invalidate("demo.display") }) }
-	if err := r.Invalidate("demo.display"); err != nil {
+	pub.before = func() { once.Do(func() { txt = "during-publication"; _ = r.Invalidate("demo.subtitle") }) }
+	txt = "before-publication"
+	if err := r.Invalidate("demo.subtitle"); err != nil {
 		t.Fatal(err)
 	}
 	before := pub.count()
@@ -323,7 +324,7 @@ func TestReopenedDialogPublicationRetries(t *testing.T) {
 			if err := r.Flush(); err != nil {
 				t.Fatalf("retry failed: %v", err)
 			}
-			if pub.count() != before+2 || pub.views[before].Dialog != nil || pub.last().Dialog == nil {
+			if pub.count() != 3 || pub.views[1].Dialog != nil || pub.last().Dialog == nil {
 				t.Fatal("retry did not clear and reopen the dialog")
 			}
 			before = pub.count()

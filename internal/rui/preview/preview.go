@@ -146,8 +146,8 @@ func genHeading(screenID, groupID string) string {
 // View converts to the existing v7 wire tree, expanding nonfocusable headings
 // with stable reserved IDs, preserving all navigation/actions and rechecking
 // the exact JSON IPC envelope limit before any later runtime publication.
-// The v7 renderer offers a hero or list, not distinct form/detail geometry;
-// preview documents that semantic template distinction as pending M5.
+// Template geometry is shared with production; old peers receive a flattened
+// row-list view through the SDK's explicitly documented compatibility adapter.
 func View(f *bundle.File, s *State) (wire.View, error) {
 	if f == nil || s == nil {
 		return wire.View{}, fmt.Errorf("missing bundle or preview state")
@@ -155,18 +155,19 @@ func View(f *bundle.File, s *State) (wire.View, error) {
 	v := wire.View{Title: strings.ToUpper(f.Document.Application.ID)}
 	for _, screen := range f.Document.Screens {
 		ws := wire.Screen{ID: screen.ID, Title: s.text(screen.Title), Subtitle: resolveString(s, screen.Subtitle)}
+		ws.Layout = screen.Layout
 		if screen.Hero != nil {
 			ws.Hero = s.text(*screen.Hero)
 		}
 		for _, group := range screen.Groups {
 			if group.Title != nil {
-				ws.Widgets = append(ws.Widgets, wire.Widget{ID: genHeading(screen.ID, group.ID), Kind: "label", Label: s.text(*group.Title)})
+				ws.Widgets = append(ws.Widgets, wire.Widget{ID: genHeading(screen.ID, group.ID), Group: group.ID, Kind: "label", Label: s.text(*group.Title)})
 			}
 			for _, w := range group.Widgets {
 				if w.VisibleWhen != nil && !s.boolean(*w.VisibleWhen, true) {
 					continue
 				}
-				item := wire.Widget{ID: w.ID, Variant: w.Variant, Label: resolveString(s, w.Label), Detail: resolveString(s, w.Detail), Target: w.Navigate}
+				item := wire.Widget{ID: w.ID, Group: group.ID, Variant: w.Variant, Label: resolveString(s, w.Label), Detail: resolveString(s, w.Detail), Target: w.Navigate}
 				switch w.Type {
 				case "button":
 					item.Kind = "button"

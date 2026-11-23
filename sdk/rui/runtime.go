@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"roundos/internal/rui/compile"
+	"roundos/internal/wire"
 	"roundos/sdk/app"
 	"roundos/sdk/rui/bundle"
 	"roundos/sdk/rui/spec"
@@ -67,6 +68,11 @@ type Runtime struct {
 	dialogID               string
 	dialogNeedsClear       bool
 	lastView               *ui.View
+	cache                  map[string]boundValue
+	dirtyKeys              map[string]bool
+	dirtyAll               bool
+	lastEventID            uint64
+	authoritative          bool
 	visible, dirty, sealed bool
 }
 
@@ -255,8 +261,7 @@ func (r *Runtime) ValidateBindings() error {
 	return nil
 }
 
-// Invalidate requests a new snapshot. Specific keys are verified against the
-// layout; current v7 transport still publishes a whole screen-tree snapshot.
+// Invalidate coalesces changed keys. No keys means reevaluate all bindings.
 func (r *Runtime) Invalidate(keys ...string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -265,6 +270,16 @@ func (r *Runtime) Invalidate(keys ...string) error {
 		_, registered := r.bindings[k]
 		if !declared && !registered {
 			return fmt.Errorf("undeclared invalidation key %q", k)
+		}
+	}
+	if len(keys) == 0 {
+		r.dirtyAll = true
+	} else {
+		if r.dirtyKeys == nil {
+			r.dirtyKeys = map[string]bool{}
+		}
+		for _, key := range keys {
+			r.dirtyKeys[key] = true
 		}
 	}
 	r.dirty = true
@@ -313,6 +328,7 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 		r.visible = ev.Visible
 		if ev.Visible {
 			r.dirty = true
+			r.dirtyAll = true
 		}
 		r.mu.Unlock()
 		return true, nil
@@ -343,9 +359,36 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 		r.mu.Unlock()
 		return true, nil
 	}
+	if !r.visible {
+		r.mu.Unlock()
+		return true, nil
+	}
 	rg := r.intActions[ev.Action]
 	bs := r.boolActions[ev.Action]
 	bindings := r.bindings
+	file, dialog, lastView := r.file, r.dialogID, r.lastView
+	if ev.UI != nil && ev.UI.ID <= r.lastEventID {
+		r.mu.Unlock()
+		return true, nil
+	}
+	r.mu.Unlock()
+	allowed, guardErr := actionAllowed(file, bindings, dialog, ev.Action, ev.UI)
+	if guardErr != nil || !allowed {
+		return true, r.rejectInput(guardErr)
+	}
+	if ev.UI != nil {
+		revisions, ok := r.publisher.(interface{ LayoutRevision() uint64 })
+		if !ok || lastView == nil || ev.UI.LayoutRevision != revisions.LayoutRevision() || ev.UI.Action != ev.Action {
+			return true, r.rejectInput(fmt.Errorf("stale RUI UI event"))
+		}
+		if err := wire.ValidateUIEvent(*lastView, *ev.UI); err != nil {
+			return true, r.rejectInput(err)
+		}
+		r.mu.Lock()
+		r.lastEventID = ev.UI.ID
+		r.mu.Unlock()
+	}
+	r.mu.Lock()
 	// Clear any active dialog when its confirm/cancel action arrives.
 	if acts, exists := r.dialogActions[r.dialogID]; exists && (ev.Action == acts[0] || ev.Action == acts[1]) {
 		r.clearDialogLocked()
@@ -356,25 +399,36 @@ func (r *Runtime) DispatchContext(ctx context.Context, ev app.Event) (bool, erro
 	case "action":
 		err = h.action(ctx, ActionEvent{Name: ev.Action, Delta: ev.Delta})
 	case "int":
+		if ev.UI != nil && ev.UI.Int != nil {
+			ev.Delta = *ev.UI.Int
+		}
 		if ev.Delta < rg.min || ev.Delta > rg.max {
-			return true, fmt.Errorf("RUI action %q value %d outside %d..%d", ev.Action, ev.Delta, rg.min, rg.max)
+			return true, r.rejectInput(fmt.Errorf("RUI action %q value outside declared range", ev.Action))
 		}
 		err = h.integer(ctx, ev.Delta)
 	case "bool":
+		if ev.UI != nil && ev.UI.Bool != nil {
+			err = h.boolean(ctx, *ev.UI.Bool)
+			break
+		}
 		current := bs.literal
 		if bs.bound {
 			b, exists := bindings[bs.binding]
 			if !exists || b.boolean == nil {
 				return true, fmt.Errorf("missing bool source %q for action %q", bs.binding, ev.Action)
 			}
-			current = b.boolean()
+			value, evaluateErr := evaluateBinding(bs.binding, b)
+			if evaluateErr != nil {
+				return true, r.rejectInput(evaluateErr)
+			}
+			current = value.boolean
 		}
 		err = h.boolean(ctx, !current)
 	default:
 		return true, fmt.Errorf("unsupported RUI handler kind %q", h.kind)
 	}
 	if err != nil {
-		return true, err
+		return true, r.rejectInput(err)
 	}
 	return true, r.Invalidate()
 }
@@ -395,14 +449,39 @@ func (r *Runtime) Flush() error {
 		return nil
 	}
 	r.dirty = false
-	bindings := make(stateSnapshot, len(r.bindings))
+	bindings := make(map[string]binding, len(r.bindings))
 	for k, v := range r.bindings {
 		bindings[k] = v
 	}
 	dialog := r.dialogID
 	needsClear := r.dialogNeedsClear
+	keys, all, cache := r.dirtyKeys, r.dirtyAll || r.cache == nil, r.cache
+	r.dirtyKeys = nil
+	r.dirtyAll = false
+	base := r.lastView
+	authoritative := r.authoritative
 	r.mu.Unlock()
-	v, err := buildView(r.file, bindings, dialog)
+	values, affected, failed, bindingErr := evaluateDirty(r.file, bindings, cache, keys, all)
+	retry := func(full bool) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.dirty = true
+		r.dirtyAll = r.dirtyAll || full
+		if r.dirtyKeys == nil {
+			r.dirtyKeys = map[string]bool{}
+		}
+		for key := range keys {
+			r.dirtyKeys[key] = true
+		}
+		for key := range failed {
+			r.dirtyKeys[key] = true
+		}
+	}
+	if len(values) != len(r.file.Manifest.Bindings) {
+		retry(true)
+		return bindingErr
+	}
+	v, err := buildViewIncremental(r.file, frozenSnapshot(values), dialog, base, affected)
 	if err == nil && dialog != "" && needsClear {
 		// The v7 shell keeps a dismissed dialog hidden until it sees no dialog
 		// or a different ID. Publish the clear even if a handler immediately
@@ -412,18 +491,31 @@ func (r *Runtime) Flush() error {
 		err = r.publish(cleared)
 	}
 	if err == nil {
-		err = r.publish(v)
+		if authoritative {
+			err = r.publishAuthoritative(v)
+		} else {
+			err = r.publish(v)
+		}
 	}
 	if err != nil {
-		r.mu.Lock()
-		r.dirty = true
-		r.mu.Unlock()
+		retry(all)
 		return err
 	}
 	r.mu.Lock()
 	if needsClear {
 		r.dialogNeedsClear = false
 	}
+	r.cache = values
+	r.authoritative = false
+	if len(failed) > 0 {
+		r.dirty = true
+		if r.dirtyKeys == nil {
+			r.dirtyKeys = map[string]bool{}
+		}
+		for key := range failed {
+			r.dirtyKeys[key] = true
+		}
+	}
 	r.mu.Unlock()
-	return nil
+	return bindingErr
 }

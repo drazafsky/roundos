@@ -448,6 +448,12 @@ func main() {
 			}
 		}(req)
 	}
+	sendInput := func(appID, action string, delta int) bool {
+		if handled, delivered := model.SendWidgetInput(action, func(event wire.UIEvent) bool { return manager.UIInput(appID, event) }); handled {
+			return delivered
+		}
+		return manager.Input(appID, action, delta)
+	}
 	flushDialog := func() {
 		appID, action := model.TakeDialogAction()
 		if action != "" && !manager.Input(appID, action, 0) {
@@ -525,7 +531,7 @@ func main() {
 			c, appAction := model.Tap(int(ev.X), int(ev.Y))
 			changed = changed || c
 			if appAction != "" {
-				manager.Input(target, appAction, model.WidgetDelta)
+				sendInput(target, appAction, model.WidgetDelta)
 			}
 		case gesture.DragStart:
 			originX := int(ev.X - ev.DX)
@@ -542,7 +548,7 @@ func main() {
 			updated, appAction = model.WidgetDragEndAt(ev.At)
 			changed = updated || changed
 			if appAction != "" {
-				manager.Input(target, appAction, model.WidgetDelta)
+				sendInput(target, appAction, model.WidgetDelta)
 			}
 		case gesture.Cancel:
 			model.StopKinetic()
@@ -750,13 +756,13 @@ func main() {
 				var delta int
 				changed, act, delta = model.Rotate(a.delta)
 				if act != "" {
-					manager.Input(model.AppID(model.Page), act, delta)
+					sendInput(model.AppID(model.Page), act, delta)
 				}
 			case "press":
 				var act string
 				changed, act = model.Activate()
 				if act != "" {
-					manager.Input(model.AppID(model.Page), act, model.WidgetDelta)
+					sendInput(model.AppID(model.Page), act, model.WidgetDelta)
 				}
 			case "button_down":
 				buttonDownAt = inputAt
@@ -779,7 +785,7 @@ func main() {
 						var act string
 						changed, act = model.Activate()
 						if act != "" {
-							manager.Input(model.AppID(model.Page), act, model.WidgetDelta)
+							sendInput(model.AppID(model.Page), act, model.WidgetDelta)
 						}
 					}
 				}
@@ -866,7 +872,7 @@ func main() {
 					}
 				}
 			case "view":
-				changed = model.SetView(ev.App, ev.View)
+				changed = model.SetViewRevision(ev.App, ev.View, ev.LayoutRevision)
 			case "connected":
 				changed = model.SetStatus(ev.App, "WAITING FOR APP")
 			case "disconnected", "error", "stopped":

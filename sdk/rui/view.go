@@ -1,9 +1,11 @@
 package rui
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"unicode/utf8"
 
@@ -17,7 +19,29 @@ import (
 // Getters are invoked only by the calling application's Flush goroutine.
 type stateSnapshot map[string]binding
 
+func (r *Runtime) publishReplacement(ctx context.Context, view ui.View) error {
+	if publisher, ok := r.publisher.(interface {
+		PublishSnapshot(context.Context, ui.View) error
+	}); ok {
+		if err := publisher.PublishSnapshot(ctx, view); err != nil {
+			return err
+		}
+		copy := wire.CopyView(view)
+		r.mu.Lock()
+		r.lastView = &copy
+		r.mu.Unlock()
+		return nil
+	}
+	return r.publish(view)
+}
+
 func (r *Runtime) publish(view ui.View) error {
+	r.mu.Lock()
+	unchanged := r.lastView != nil && reflect.DeepEqual(*r.lastView, view)
+	r.mu.Unlock()
+	if unchanged {
+		return nil
+	}
 	if err := r.publisher.Publish(view); err != nil {
 		return err
 	}
@@ -80,8 +104,20 @@ func buildView(f *bundle.File, states stateSnapshot, dialogID string) (ui.View, 
 }
 
 func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID string, includeHidden bool) (ui.View, error) {
+	return buildViewSelected(f, states, dialogID, includeHidden, nil, nil)
+}
+
+func buildViewIncremental(f *bundle.File, states stateSnapshot, dialogID string, base *ui.View, affected map[int]bool) (ui.View, error) {
+	return buildViewSelected(f, states, dialogID, false, base, affected)
+}
+
+func buildViewSelected(f *bundle.File, states stateSnapshot, dialogID string, includeHidden bool, base *ui.View, affected map[int]bool) (ui.View, error) {
 	v := ui.View{Title: strings.ToUpper(f.Document.Application.ID)}
-	for _, screen := range f.Document.Screens {
+	for si, screen := range f.Document.Screens {
+		if base != nil && len(base.Screens) == len(f.Document.Screens) && !affected[si] && base.Screens[si].ID == screen.ID {
+			v.Screens = append(v.Screens, base.Screens[si])
+			continue
+		}
 		title, err := states.text(screen.Title, 80)
 		if err != nil {
 			return v, fmt.Errorf("screen %s title: %w", screen.ID, err)
@@ -91,6 +127,7 @@ func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID stri
 			return v, fmt.Errorf("screen %s subtitle: %w", screen.ID, err)
 		}
 		sc := ui.ScreenSpec{ID: screen.ID, Title: title, Subtitle: sub}
+		sc.Layout = screen.Layout
 		if screen.Hero != nil {
 			sc.Hero, err = states.text(*screen.Hero, 80)
 			if err != nil {
@@ -103,7 +140,7 @@ func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID stri
 				if e != nil {
 					return v, e
 				}
-				sc.Widgets = append(sc.Widgets, ui.Widget{ID: headingID(screen.ID, group.ID), Kind: "label", Label: t})
+				sc.Widgets = append(sc.Widgets, ui.Widget{ID: headingID(screen.ID, group.ID), Group: group.ID, Kind: "label", Label: t})
 			}
 			for _, w := range group.Widgets {
 				if w.VisibleWhen != nil && !includeHidden {
@@ -115,7 +152,7 @@ func buildViewWithVisibility(f *bundle.File, states stateSnapshot, dialogID stri
 						continue
 					}
 				}
-				item := ui.Widget{ID: w.ID, Variant: w.Variant, Target: w.Navigate}
+				item := ui.Widget{ID: w.ID, Group: group.ID, Variant: w.Variant, Target: w.Navigate}
 				item.Label, err = states.optText(w.Label, 160)
 				if err != nil {
 					return v, fmt.Errorf("widget %s label: %w", w.ID, err)

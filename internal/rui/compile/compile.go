@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 
 	"roundos/internal/rui/parse"
 	"roundos/internal/rui/validate"
@@ -28,6 +29,7 @@ func FromDocument(d *spec.Document, src []byte) ([]byte, *bundle.File, error) {
 	}
 	sum := sha256.Sum256(src)
 	f := &bundle.File{Format: bundle.Format, Document: *d, Manifest: *manifest, SourceSHA256: hex.EncodeToString(sum[:]), SourceMap: SourceMap(d)}
+	f.Dependencies = Dependencies(d)
 	bytes, err := bundle.Encode(f)
 	if err != nil {
 		return nil, nil, err
@@ -57,6 +59,20 @@ func Verify(data []byte) (*bundle.File, error) {
 	for k, pos := range sm {
 		if other, exists := f.SourceMap[k]; !exists || other != pos {
 			return nil, fmt.Errorf("compiled source map differs from document at %s", k)
+		}
+	}
+	deps := Dependencies(&f.Document)
+	if f.Format == bundle.LegacyFormat {
+		// V1 bundles predate stored dependencies. Derive them once at load.
+		f.Dependencies = deps
+	} else {
+		if len(deps) != len(f.Dependencies) {
+			return nil, fmt.Errorf("compiled dependencies differ from document")
+		}
+		for key, expected := range deps {
+			if !reflect.DeepEqual(expected, f.Dependencies[key]) {
+				return nil, fmt.Errorf("compiled dependencies differ for binding %q", key)
+			}
 		}
 	}
 	return f, nil

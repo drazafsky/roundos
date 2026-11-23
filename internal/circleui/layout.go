@@ -5,6 +5,7 @@ package circleui
 import (
 	"math"
 	"roundos/internal/wire"
+	"strings"
 )
 
 const Center = 240
@@ -103,6 +104,10 @@ func ScrollTo(items []wire.Widget, focus, scroll int, hero, largeTargets bool) i
 	if hero || largeTargets {
 		count = 2
 	}
+	return scrollToCount(items, focus, scroll, count)
+}
+
+func scrollToCount(items []wire.Widget, focus, scroll, count int) int {
 	if focus < scroll {
 		scroll = focus
 	}
@@ -147,10 +152,160 @@ func MaxScrollPx(n int, hero, largeTargets bool) float64 {
 }
 func VisiblePixelAt(items []wire.Widget, scrollPx float64, hero, largeTargets bool) []Row {
 	count, top, step, height := RowMetrics(hero, largeTargets)
+	return visiblePixelMetrics(items, scrollPx, count, top, step, height)
+}
+
+// ScreenMetrics is shared by production drawing, preview, hit-testing,
+// rotary focus and kinetic scrolling. Legacy and list screens retain their
+// established geometry; forms and detail pages reserve taller control rows.
+func ScreenMetrics(screen wire.Screen, largeTargets bool) (count, top, step, height int) {
+	count, top, step, height = RowMetrics(screen.Hero != "", largeTargets)
+	if screen.Hero != "" {
+		return
+	}
+	switch screen.Layout {
+	case "form":
+		count, top, step, height = 2, 159, 98, 86
+	case "detail":
+		count, top, step, height = 2, 159, 110, 98
+	}
+	return
+}
+
+func ScreenMaxScrollPx(screen wire.Screen, largeTargets bool) float64 {
+	if hasSectionHeadings(screen) {
+		g := sectionGeometry(screen, largeTargets)
+		return float64(max(0, g.total-g.viewport))
+	}
+	count, _, step, _ := ScreenMetrics(screen, largeTargets)
+	return float64(max(0, len(screen.Widgets)-count) * step)
+}
+
+func ScreenScrollTo(screen wire.Screen, focus, scroll int, largeTargets bool) int {
+	if hasSectionHeadings(screen) {
+		g := sectionGeometry(screen, largeTargets)
+		if focus < 0 || focus >= len(g.starts) {
+			return scroll
+		}
+		scroll = max(0, min(scroll, len(g.starts)-1))
+		start := min(g.starts[scroll], max(0, g.total-g.viewport))
+		if g.starts[focus] < start {
+			return focus
+		}
+		if g.starts[focus]+g.heights[focus] > start+g.viewport {
+			for i := 0; i <= focus; i++ {
+				if g.starts[i]+g.viewport >= g.starts[focus]+g.heights[focus] {
+					return i
+				}
+			}
+		}
+		return scroll
+	}
+	count, _, _, _ := ScreenMetrics(screen, largeTargets)
+	return scrollToCount(screen.Widgets, focus, scroll, count)
+}
+
+func VisibleScreenPixelAt(screen wire.Screen, scrollPx float64, largeTargets bool) []Row {
+	if hasSectionHeadings(screen) {
+		g := sectionGeometry(screen, largeTargets)
+		scrollPx = math.Max(0, math.Min(float64(max(0, g.total-g.viewport)), scrollPx))
+		var rows []Row
+		for i, start := range g.starts {
+			y := g.top + start - int(math.Round(scrollPx))
+			if row, ok := clippedRow(i, max(g.top, y), min(g.top+g.viewport, y+g.heights[i])); ok {
+				rows = append(rows, row)
+			}
+		}
+		return rows
+	}
+	count, top, step, height := ScreenMetrics(screen, largeTargets)
+	return visiblePixelMetrics(screen.Widgets, scrollPx, count, top, step, height)
+}
+
+func ScreenRowOffset(screen wire.Screen, index int, largeTargets bool) float64 {
+	if hasSectionHeadings(screen) {
+		g := sectionGeometry(screen, largeTargets)
+		if len(g.starts) == 0 {
+			return 0
+		}
+		return float64(min(g.starts[max(0, min(index, len(g.starts)-1))], max(0, g.total-g.viewport)))
+	}
+	_, _, step, _ := ScreenMetrics(screen, largeTargets)
+	return float64(index * step)
+}
+
+func ScreenScrollIndex(screen wire.Screen, offset float64, largeTargets bool) int {
+	if hasSectionHeadings(screen) {
+		g := sectionGeometry(screen, largeTargets)
+		index := 0
+		for i, start := range g.starts {
+			if float64(start) > offset {
+				break
+			}
+			index = i
+		}
+		return index
+	}
+	_, _, step, _ := ScreenMetrics(screen, largeTargets)
+	return int(offset / float64(step))
+}
+
+func isSectionHeading(widget wire.Widget) bool {
+	return widget.Group != "" && strings.HasPrefix(widget.ID, "rui.heading.")
+}
+func hasSectionHeadings(screen wire.Screen) bool {
+	if screen.Layout == "" {
+		return false
+	}
+	for _, widget := range screen.Widgets {
+		if isSectionHeading(widget) {
+			return true
+		}
+	}
+	return false
+}
+
+type sectionRows struct {
+	starts, heights      []int
+	top, viewport, total int
+}
+
+func sectionGeometry(screen wire.Screen, largeTargets bool) sectionRows {
+	count, top, step, height := ScreenMetrics(screen, largeTargets)
+	gap := step - height
+	g := sectionRows{top: top, viewport: min((count-1)*step+height+48+gap, 422-top)}
+	for _, widget := range screen.Widgets {
+		h := height
+		if isSectionHeading(widget) {
+			h = 48
+		}
+		g.starts = append(g.starts, g.total)
+		g.heights = append(g.heights, h)
+		g.total += h + gap
+	}
+	if len(screen.Widgets) > 0 {
+		g.total -= gap
+	}
+	return g
+}
+
+func clippedRow(index, top, bottom int) (Row, bool) {
+	if bottom-top < 15 {
+		return Row{}, false
+	}
+	far := math.Max(math.Abs(float64(top-Center)), math.Abs(float64(bottom-Center)))
+	half := min(148, int(math.Sqrt(math.Max(0, SafeRadius*SafeRadius-far*far)))-9)
+	if half < 35 {
+		return Row{}, false
+	}
+	return Row{Index: index, Rect: Rect{Left: Center - half, Top: top, Right: Center + half, Bottom: bottom}}, true
+}
+
+func visiblePixelMetrics(items []wire.Widget, scrollPx float64, count, top, step, height int) []Row {
 	if len(items) == 0 {
 		return nil
 	}
-	scrollPx = math.Max(0, math.Min(MaxScrollPx(len(items), hero, largeTargets), scrollPx))
+	scrollPx = math.Max(0, math.Min(float64(max(0, len(items)-count)*step), scrollPx))
 	viewportEnd := top + (count-1)*step + height
 	rows := make([]Row, 0, count+2)
 	first := max(0, int(math.Floor(scrollPx/float64(step))))
@@ -160,18 +315,9 @@ func VisiblePixelAt(items []wire.Widget, scrollPx float64, hero, largeTargets bo
 			break
 		}
 		rowTop, rowBottom := max(top, y), min(viewportEnd, y+height)
-		if rowBottom-rowTop < 15 {
-			continue
+		if row, ok := clippedRow(i, rowTop, rowBottom); ok {
+			rows = append(rows, row)
 		}
-		far := math.Max(math.Abs(float64(rowTop-Center)), math.Abs(float64(rowBottom-Center)))
-		half := int(math.Sqrt(math.Max(0, SafeRadius*SafeRadius-far*far))) - 9
-		if half > 148 {
-			half = 148
-		}
-		if half < 35 {
-			continue
-		}
-		rows = append(rows, Row{Index: i, Rect: Rect{Left: Center - half, Top: rowTop, Right: Center + half, Bottom: rowBottom}})
 	}
 	return rows
 }

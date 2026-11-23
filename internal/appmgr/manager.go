@@ -23,22 +23,27 @@ import (
 )
 
 type Event struct {
-	App          string
-	Kind         string // connected, view, disconnected, error, stopped
-	View         wire.View
-	Detail       string
-	Notification *wire.Notification
-	TextRequest  *wire.TextRequest
+	App            string
+	Kind           string // connected, view, disconnected, error, stopped
+	View           wire.View
+	Detail         string
+	Notification   *wire.Notification
+	TextRequest    *wire.TextRequest
+	LayoutRevision uint64
 }
 
 type endpoint struct {
-	app         string
-	conn        net.Conn
-	send        chan wire.Message
-	raw         chan wire.Message
-	closed      chan struct{}
-	rawContacts bool
-	once        sync.Once
+	app          string
+	conn         net.Conn
+	send         chan wire.Message
+	raw          chan wire.Message
+	closed       chan struct{}
+	rawContacts  bool
+	once         sync.Once
+	capabilities []string   // immutable for this connection
+	layout       uint64     // protected by Manager.mu
+	view         *wire.View // protected by Manager.mu
+	eventID      uint64     // protected by Manager.mu
 }
 
 func (e *endpoint) close() { e.once.Do(func() { close(e.closed); e.conn.Close() }) }
@@ -323,9 +328,10 @@ func (m *Manager) handle(c net.Conn) {
 		return
 	}
 	e := &endpoint{app: hello.App, conn: c, send: make(chan wire.Message, 64), raw: make(chan wire.Message, 1), closed: make(chan struct{})}
+	e.capabilities = wire.SelectCapabilities(hello.Capabilities)
 	m.peers[hello.App] = e
 	active := m.active == hello.App
-	e.enqueue(wire.Message{Version: wire.Version, Type: "visibility", Visible: active})
+	e.enqueue(wire.Message{Version: wire.Version, Type: "visibility", Visible: active, Capabilities: e.capabilities})
 	m.mu.Unlock()
 	m.report(Event{App: hello.App, Kind: "connected"})
 	m.eventMu.Unlock()
@@ -357,14 +363,52 @@ func (m *Manager) handle(c net.Conn) {
 	// Each connection owns its reconstruction baseline. A restart must publish
 	// a full view before patches can be accepted.
 	var current *wire.View
+	var retained retainedView
+	reactive := wire.HasCapability(e.capabilities, wire.WidgetPatchV1) || wire.HasCapability(e.capabilities, wire.UIEventV1)
 	for {
 		msg, err := wire.Read(c)
 		if err != nil {
 			break
 		}
 		switch {
+		case reactive && (msg.Type == "widget_patch" || msg.Type == "view" && (msg.LayoutRevision != 0 || retained.layout != 0)):
+			if msg.Type == "widget_patch" && !wire.HasCapability(e.capabilities, wire.WidgetPatchV1) {
+				e.close()
+				continue
+			}
+			var v wire.View
+			accepted := false
+			if msg.View == nil || !wire.UsesTemplates(*msg.View) || wire.HasCapability(e.capabilities, wire.TemplatesV1) {
+				v, accepted = retained.accept(msg)
+			}
+			if !accepted {
+				if !e.enqueue(wire.Message{Version: wire.Version, Type: "resync_required", LayoutRevision: retained.layout, NewRevision: retained.revision}) {
+					e.close()
+				}
+				continue
+			}
+			current = &v
+			m.mu.Lock()
+			e.layout, e.view = retained.layout, &v
+			m.mu.Unlock()
+			m.reportPeer(e, Event{App: hello.App, Kind: "view", View: v, LayoutRevision: retained.layout})
+			if !e.enqueue(wire.Message{Version: wire.Version, Type: "view_ack", LayoutRevision: retained.layout, NewRevision: retained.revision}) {
+				e.close()
+			}
 		case msg.Type == "view" && msg.View != nil:
+			// A new SDK may publish before reading initial visibility. Once
+			// reactive features are selected, wait for its versioned resend;
+			// reporting both snapshots would reorder initial views and input.
+			if reactive {
+				continue
+			}
 			v := *msg.View
+			if wire.UsesTemplates(v) && !wire.HasCapability(e.capabilities, wire.TemplatesV1) {
+				continue
+			}
+			if wire.ValidateView(v) != nil {
+				continue
+			}
 			current = &v
 			m.reportPeer(e, Event{App: hello.App, Kind: "view", View: v})
 		case msg.Type == "notify" && msg.Notification != nil:
@@ -378,6 +422,12 @@ func (m *Manager) handle(c net.Conn) {
 			e.rawContacts = msg.RawContacts
 			m.mu.Unlock()
 		case msg.Type == "view_patch" && msg.Patch != nil && current != nil:
+			if retained.layout != 0 {
+				if !e.enqueue(wire.Message{Version: wire.Version, Type: "resync_required", LayoutRevision: retained.layout, NewRevision: retained.revision}) {
+					e.close()
+				}
+				continue
+			}
 			v := msg.Patch.Apply(*current)
 			current = &v
 			m.reportPeer(e, Event{App: hello.App, Kind: "view", View: v})

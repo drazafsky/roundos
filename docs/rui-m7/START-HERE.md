@@ -79,7 +79,9 @@ and its failure policy remain unchanged. The original renderer
 keeps a rolling 256-input window, so a fresh process is required to exclude
 prior runs. All navigation and controls after restart belong to that workload.
 The journal reader accepts only that PID and boot, with a summary inside its
-new process window. An interactive run with no measured inputs stays pending. Follow its displayed
+new process window. Process identities, raw hashes and timestamp windows must
+be distinct across all fifteen runs on each release. An interactive run with no
+measured inputs stays pending. Follow its displayed
 workload, using the same theme, text scale, input method, network and device
 configuration on both releases. Reduce Motion must be enabled for its scenario
 and reset to the same setting for each following workload. The managed service
@@ -164,8 +166,10 @@ the secure value never appears in output or the reloaded UI.
 
 Measure at least three stable saves through roundui dev from desktop to Pi.
 A 60-fps-or-faster recording must show the save gesture and resulting Pi frame;
-record method="save-gesture-to-visible-frame", integer frames and actual fps in
-reload_measurements. The report conservatively includes one extra frame of
+record method="save-gesture-to-visible-frame", integer frames, actual fps, a
+recording identifier and the zero-based save_frame in reload_measurements. The
+three recordings must use distinct source intervals; intervals within the same
+recording cannot overlap. Copied measurements cannot satisfy completeness. The report conservatively includes one extra frame of
 uncertainty. This starts before stable-save completion and is stricter than
 that budget. A control ACK or compilation duration alone is insufficient.
 

@@ -1,6 +1,8 @@
 """Synthetic unit fixtures exercise gate decisions; they are not Pi evidence."""
 from datetime import datetime, timedelta, timezone
 import json
+import copy
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -23,16 +25,26 @@ def identity(baseline=False):
 
 
 def sessions(device):
-    bound = {**{key: device[key] for key in gate.IDENTITY_KEYS}, 'verified': True,
-             'raw_sha256': {'run-01.jsonl': 'e' * 64}, 'window_start_boottime_seconds': 99}
-    return {name: {'scenario': name, 'accepted_for_m0': True, 'reference_pi_managed': True,
-                   'status': 'COLLECTED', 'target_seconds': 60, 'target_repeats': 3, 'interval_seconds': 1,
-                   'runs': [{'run': i, 'complete': True, 'm7_identity': dict(bound),
-                             'sample': {'records': 60, 'shell_cpu_percent_mean': 10, 'shell_rss_kib_peak': 20000,
-                                        'shell_cpu_valid_records': 60, 'shell_rss_valid_records': 60},
-                             'renderer_metrics': [{'input-to-present-p95': '10ms', 'run_scoped': True,
-                                                   'input_samples': 10, 'service_pid': device['service_pid'], 'boot_id': device['boot_id']}]} for i in (1, 2, 3)]}
-            for name in gate.SCENARIOS}
+    result = {}
+    for scenario_index, name in enumerate(gate.SCENARIOS):
+        runs = []
+        for i in (1, 2, 3):
+            offset = scenario_index * 300 + (i - 1) * 100
+            pid = device['service_pid'] + scenario_index * 3 + i - 1
+            start = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=offset)
+            bound = {**{key: device[key] for key in gate.IDENTITY_KEYS}, 'verified': True,
+                     'service_pid': pid, 'service_start_boottime_seconds': 100 + offset,
+                     'window_start_boottime_seconds': 99 + offset,
+                     'before_utc': start.isoformat(), 'after_utc': (start + timedelta(seconds=70)).isoformat(),
+                     'raw_sha256': {'run-01.jsonl': hashlib.sha256(f"{device['version']}:{name}:{i}".encode()).hexdigest()}}
+            runs.append({'run': i, 'complete': True, 'm7_identity': bound,
+                         'sample': {'records': 60, 'shell_cpu_percent_mean': 10, 'shell_rss_kib_peak': 20000,
+                                    'shell_cpu_valid_records': 60, 'shell_rss_valid_records': 60},
+                         'renderer_metrics': [{'input-to-present-p95': '10ms', 'run_scoped': True,
+                                               'input_samples': 10, 'service_pid': pid, 'boot_id': device['boot_id']}]})
+        result[name] = {'scenario': name, 'accepted_for_m0': True, 'reference_pi_managed': True,
+                        'status': 'COLLECTED', 'target_seconds': 60, 'target_repeats': 3, 'interval_seconds': 1, 'runs': runs}
+    return result
 
 
 class GateTests(unittest.TestCase):
@@ -41,7 +53,8 @@ class GateTests(unittest.TestCase):
         self.before, self.after = sessions(self.old), sessions(self.new)
         self.observed = {'candidate_commit': self.new['commit'], 'checks': {
             key: {'observed': True, 'evidence': 'synthetic unit test only'} for key in gate.OBSERVATIONS},
-            'reload_measurements': [{'method': 'save-gesture-to-visible-frame', 'fps': 60, 'frames': 20}] * 3}
+            'reload_measurements': [{'method': 'save-gesture-to-visible-frame', 'fps': 60, 'frames': 20,
+                                     'recording': 'synthetic-test.mp4', 'save_frame': i * 100} for i in range(3)]}
         self.protocol = {'architecture': 'arm', 'baseline_source_archive_sha256':
                          '06a1241970b365a4d91fa5bee65561322d155cd79303c08d097bd7035e100c75',
                          'baseline': {'ticks': 5, 'bytes': 4755},
@@ -126,6 +139,34 @@ class GateTests(unittest.TestCase):
             self.assertEqual(self.report()['reload']['status'], 'FAIL')
             self.assertEqual(self.report()['gate'], 'FAIL')
 
+    def test_copied_process_hash_or_window_cannot_supply_independent_runs(self):
+        for repeated in ('process', 'hash', 'window', 'entire run', 'other scenario'):
+            self.setUp()
+            runs = self.after['gallery_flick']['runs']
+            if repeated == 'entire run':
+                runs[:] = [dict(copy.deepcopy(runs[0]), run=i) for i in (1, 2, 3)]
+            elif repeated == 'other scenario':
+                self.after['timer_background']['runs'] = copy.deepcopy(runs)
+            else:
+                first, second = runs[0]['m7_identity'], runs[1]['m7_identity']
+                if repeated == 'process':
+                    for key in ('service_pid', 'service_start_boottime_seconds'):
+                        second[key] = first[key]
+                    runs[1]['renderer_metrics'][0]['service_pid'] = first['service_pid']
+                if repeated == 'hash': second['raw_sha256'] = dict(first['raw_sha256'])
+                if repeated == 'window':
+                    second['before_utc'], second['after_utc'] = first['before_utc'], first['after_utc']
+            self.assertEqual(self.report()['gate'], 'PENDING', repeated)
+            runs[0]['sample']['shell_rss_kib_peak'] = 30000
+            self.assertEqual(self.report()['gate'], 'FAIL', repeated)
+
+    def test_reload_records_need_distinct_nonoverlapping_source_intervals(self):
+        entries = self.observed['reload_measurements']
+        entries[1]['save_frame'] = entries[0]['save_frame']
+        self.assertEqual(self.report()['gate'], 'PENDING')
+        entries[1]['frames'] = 30
+        self.assertEqual(self.report()['gate'], 'FAIL')
+
     def test_identity_requires_all_trust_checks_and_exact_candidate_commit(self):
         for key, value in identity().items():
             if value is True:
@@ -150,7 +191,7 @@ class GateTests(unittest.TestCase):
         for change in ('old process', 'no scope', 'no inputs', 'few CPU', 'few RSS'):
             self.setUp()
             run = self.after['gallery_flick']['runs'][0]
-            if change == 'old process': run['m7_identity']['window_start_boottime_seconds'] = 101
+            if change == 'old process': run['m7_identity']['window_start_boottime_seconds'] = run['m7_identity']['service_start_boottime_seconds'] + 1
             if change == 'no scope': run['renderer_metrics'][0].pop('run_scoped')
             if change == 'no inputs': run['renderer_metrics'][0]['input_samples'] = 0
             if change == 'few CPU': run['sample']['shell_cpu_valid_records'] = 1
@@ -214,6 +255,7 @@ class GateTests(unittest.TestCase):
     def test_collector_output_preserves_three_independent_run_identities(self):
         result, first, calls = self.collect_fixture()
         self.assertEqual(len(gate.session_runs(result, 'gallery_flick', first)), 3)
+        self.assertTrue(gate.independent_samples(result['runs'], 3))
         self.assertEqual(result['status'], 'COLLECTED')
         self.assertEqual([value['m7_identity']['service_pid'] for value in result['runs']], [123, 124, 125])
         self.assertEqual(sum(call.args[0][0] == 'sudo' for call in calls), 6)

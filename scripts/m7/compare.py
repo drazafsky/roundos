@@ -137,15 +137,57 @@ def aggregate(statuses):
     return 'FAIL' if 'FAIL' in statuses else 'PASS' if statuses and all(value == 'PASS' for value in statuses) else 'PENDING'
 
 
+def disjoint(windows):
+    ordered = sorted(windows)
+    return all(previous[1] <= current[0] for previous, current in zip(ordered, ordered[1:]))
+
+
+def independent_samples(runs, expected):
+    runs = list(runs)
+    if len(runs) != expected:
+        return False
+    processes, hashes, windows = set(), set(), {}
+    try:
+        for run in runs:
+            binding = run['m7_identity']
+            boot = binding['boot_id']
+            if not isinstance(boot, str) or not boot:
+                return False
+            processes.add((boot, binding['service_pid'], binding['service_start_boottime_seconds']))
+            hashes.add(binding['raw_sha256']['run-01.jsonl'])
+            before, after = datetime.fromisoformat(binding['before_utc']), datetime.fromisoformat(binding['after_utc'])
+            if before.tzinfo is None or after.tzinfo is None or (after - before).total_seconds() < 59:
+                return False
+            windows.setdefault(boot, []).append((before, after))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return len(processes) == expected and len(hashes) == expected and all(disjoint(values) for values in windows.values())
+
+
+def independent_reload_records(records):
+    if len(records) < 3:
+        return False
+    windows = {}
+    for item in records:
+        recording, start = item.get('recording'), item.get('save_frame')
+        if not isinstance(recording, str) or not recording.strip() or type(start) is not int or start < 0:
+            return False
+        windows.setdefault(recording.strip(), []).append((start, start + item['frames'] + 1))
+    return all(disjoint(values) for values in windows.values())
+
+
 def compare(baseline_identity, candidate_identity, baseline, candidate, observations, protocol):
     same_device = baseline_identity.get('device_id_sha256') == candidate_identity.get('device_id_sha256')
     identity_ok = valid_identity(baseline_identity, True) and valid_identity(candidate_identity, False) and same_device
     result = {'generated_utc': datetime.now(timezone.utc).isoformat(),
               'candidate_commit': candidate_identity.get('commit'),
               'identity': 'PASS' if identity_ok else 'PENDING', 'scenarios': {}, 'observations': {}}
+    all_old, all_new = [], []
     for scenario in SCENARIOS:
         old_session, new_session = baseline.get(scenario, {}), candidate.get(scenario, {})
         old, new = session_runs(old_session, scenario, baseline_identity), session_runs(new_session, scenario, candidate_identity)
+        all_old.extend(old.values())
+        all_new.extend(new.values())
         if not identity_ok or old_session.get('interval_seconds') != new_session.get('interval_seconds'):
             result['scenarios'][scenario] = {'status': 'PENDING'}
             continue
@@ -166,10 +208,12 @@ def compare(baseline_identity, candidate_identity, baseline, candidate, observat
                                 'metrics': metrics, 'status': aggregate(list(metrics.values()))})
         complete = all(session.get('accepted_for_m0') is True and session.get('status') == 'COLLECTED'
                        and len(session.get('runs', [])) == 3 for session in (old_session, new_session))
+        complete = complete and independent_samples(old.values(), 3) and independent_samples(new.values(), 3)
         statuses = [item['status'] for item in comparisons]
         if not complete:
             statuses.append('PENDING')
         result['scenarios'][scenario] = {'status': aggregate(statuses), 'runs': comparisons}
+    result['independence'] = 'PASS' if identity_ok and independent_samples(all_old, len(SCENARIOS) * 3) and independent_samples(all_new, len(SCENARIOS) * 3) else 'PENDING'
     matching_observations = observations.get('candidate_commit') == candidate_identity.get('commit') and identity_ok
     for name in OBSERVATIONS:
         entry = observations.get('checks', {}).get(name, {})
@@ -180,7 +224,7 @@ def compare(baseline_identity, candidate_identity, baseline, candidate, observat
                      and item.get('method') == 'save-gesture-to-visible-frame' and number(item.get('frames')) and type(item['frames']) is int
                      and number(item.get('fps')) and item['fps'] >= 60]
     upper_bounds = [1000 * (item['frames'] + 1) / item['fps'] for item in valid_reloads]
-    reload_status = 'FAIL' if any(value > 500 for value in upper_bounds) else 'PASS' if len(upper_bounds) >= 3 and len(valid_reloads) == len(reloads) else 'PENDING'
+    reload_status = 'FAIL' if any(value > 500 for value in upper_bounds) else 'PASS' if independent_reload_records(valid_reloads) and len(valid_reloads) == len(reloads) else 'PENDING'
     result['reload'] = {'status': reload_status, 'upper_bounds_ms': upper_bounds}
     old_traffic, new_traffic = protocol.get('baseline', {}), protocol.get('candidate', {})
     valid_protocol = (identity_ok and protocol.get('architecture') == 'arm' and type(old_traffic.get('ticks')) is int and old_traffic['ticks'] >= 5
@@ -190,7 +234,7 @@ def compare(baseline_identity, candidate_identity, baseline, candidate, observat
                       and number(old_traffic.get('bytes')) and old_traffic['bytes'] > 0
                       and number(new_traffic.get('bytes')) and type(new_traffic.get('full_trees')) is int and new_traffic['full_trees'] >= 0)
     result['protocol'] = 'PENDING' if not valid_protocol else 'PASS' if new_traffic['full_trees'] == 0 and new_traffic['bytes'] * 2 <= old_traffic['bytes'] else 'FAIL'
-    statuses = [result['identity'], result['protocol'], result['reload']['status'], *[item['status'] for item in result['scenarios'].values()]]
+    statuses = [result['identity'], result['independence'], result['protocol'], result['reload']['status'], *[item['status'] for item in result['scenarios'].values()]]
     all_observed = all(value == 'OBSERVED' for value in result['observations'].values())
     result['gate'] = 'FAIL' if 'FAIL' in statuses or 'FAIL' in result['observations'].values() else 'READY_FOR_HUMAN_REVIEW' if all(value == 'PASS' for value in statuses) and all_observed else 'PENDING'
     return result

@@ -194,7 +194,7 @@ func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, d
 					}
 					low, high, err := states.widgetRange(widget)
 					if err != nil {
-						return view, err
+						return view, nil, err
 					}
 					if value < low || value > high {
 						return view, nil, fmt.Errorf("replacement widget %q value outside declared range", widget.ID)

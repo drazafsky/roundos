@@ -127,8 +127,13 @@ func NewForApp(p Publisher, data []byte, expectedAppID string) (*Runtime, error)
 					rg := intRange{}
 					if w.Type == "timePicker" {
 						rg = intRange{min: 0, max: 1439}
-					} else if w.Min != nil && w.Max != nil {
-						rg = intRange{min: *w.Min, max: *w.Max}
+					} else {
+						if w.Min != nil {
+							rg.min = *w.Min
+						}
+						if w.Max != nil {
+							rg.max = *w.Max
+						}
 					}
 					rg.minBinding, rg.maxBinding = w.MinBinding, w.MaxBinding
 					if prev, ok := r.intActions[w.OnCommit]; ok && prev != rg {

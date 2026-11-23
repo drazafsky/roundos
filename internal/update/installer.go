@@ -132,18 +132,20 @@ func (localInstallerCommands) Install(ctx context.Context, root string) error {
 // helper process. Production paths are fixed; optional apps cannot choose paths,
 // executables, service names, or installer arguments.
 type Installer struct {
-	root     string
-	stateDir string
-	cache    string
-	unitFile string
-	commands installerCommands
-	stage    func(context.Context, Release, string) (*Package, error)
+	root       string
+	stateDir   string
+	cache      string
+	unitFile   string
+	commands   installerCommands
+	stage      func(context.Context, Release, string) (*Package, error)
+	startWait  time.Duration
+	writeState func(string, any) error
 }
 
 func NewInstaller() *Installer {
 	stager := NewStager()
 	return &Installer{root: "/opt/roundos", stateDir: "/var/lib/roundos/shell-data", cache: "/var/lib/roundos/update-cache",
-		unitFile: "/etc/systemd/system/roundos.service", commands: localInstallerCommands{}, stage: stager.Stage}
+		unitFile: "/etc/systemd/system/roundos.service", commands: localInstallerCommands{}, stage: stager.Stage, startWait: 10 * time.Second}
 }
 
 func (i *Installer) transactionFile() string { return filepath.Join(i.stateDir, "update-install.json") }
@@ -217,6 +219,9 @@ func (i *Installer) preflight(ctx context.Context) (string, error) {
 		if err != nil || !bytes.Equal(unit, template) {
 			return "", errors.New("custom service configuration requires a manual update")
 		}
+		if err := i.effectiveManagedUnit(ctx, name); err != nil {
+			return "", err
+		}
 	}
 	for _, file := range []string{"SHA256SUMS", "bin/roundd"} {
 		if err := trustedInstalledPath(filepath.Join(controller, file), false); err != nil {
@@ -281,7 +286,11 @@ func (i *Installer) Request(ctx context.Context, release Release) (InstallStatus
 		return status, err
 	}
 	lock.Close() // the helper must acquire the lock before it can start staging
-	if _, err := i.commands.Run(ctx, "/usr/bin/systemctl", "start", "--no-block", "roundos-update.service"); err != nil {
+	_, err = i.commands.Run(ctx, "/usr/bin/systemctl", "start", "--no-block", "roundos-update.service")
+	if err == nil && i.startWait > 0 {
+		err = i.awaitHelperStartup(ctx, id)
+	}
+	if err != nil {
 		// If starting the job definitively failed, release the queued request
 		// so a later user retry can succeed. Never overwrite a helper that
 		// already acquired the lock and started processing this request.
@@ -295,7 +304,39 @@ func (i *Installer) Request(ctx context.Context, release Release) (InstallStatus
 		}
 		return transaction.Status, err
 	}
+	if latest, err := i.ReadStatus(); err == nil && latest.ID == id {
+		return latest, nil
+	}
 	return transaction.Status, nil
+}
+
+func (i *Installer) awaitHelperStartup(ctx context.Context, id string) error {
+	timer := time.NewTimer(i.startWait)
+	defer timer.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if status, err := i.ReadStatus(); err != nil {
+			return err
+		} else if status.ID != id || status.Phase != "queued" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		case <-timer.C:
+			lock, err := i.lock()
+			if errors.Is(err, ErrInstallBusy) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			lock.Close()
+			return errors.New("update helper did not acknowledge startup")
+		}
+	}
 }
 
 func (i *Installer) RunPending(ctx context.Context) error {
@@ -389,6 +430,21 @@ func (i *Installer) RunPending(ctx context.Context) error {
 	if err := i.commands.Install(ctx, p.Root); err != nil {
 		return i.rollback(ctx, &transaction, err)
 	}
+	// The recovery controller must never point at data that exists only in the
+	// page cache. Flush files and directory entries before readiness or commit.
+	if err := syncInstalledRelease(ctx, transaction.NewRelease); err != nil {
+		return i.rollback(ctx, &transaction, err)
+	}
+	unit, err := os.ReadFile(filepath.Join(p.Root, "systemd", "roundos.service"))
+	if err != nil {
+		return i.rollback(ctx, &transaction, err)
+	}
+	if err := replaceUnit(i.unitFile, unit); err != nil {
+		return i.rollback(ctx, &transaction, err)
+	}
+	if _, err := i.commands.Run(ctx, "/usr/bin/systemctl", "daemon-reload"); err != nil {
+		return i.rollback(ctx, &transaction, err)
+	}
 	if err := i.phase(&transaction, "starting", "Starting the new version"); err != nil {
 		return i.rollback(ctx, &transaction, err)
 	}
@@ -410,7 +466,11 @@ func (i *Installer) phase(transaction *installTransaction, phase, message string
 	if len(transaction.Detail) > 8192 {
 		transaction.Detail = transaction.Detail[:8192]
 	}
-	return writeInstallJSON(i.transactionFile(), transaction)
+	write := i.writeState
+	if write == nil {
+		write = writeInstallJSON
+	}
+	return write(i.transactionFile(), transaction)
 }
 
 func (i *Installer) fail(transaction *installTransaction, cause error) error {
@@ -420,10 +480,14 @@ func (i *Installer) fail(transaction *installTransaction, cause error) error {
 }
 
 func (i *Installer) startReady(ctx context.Context) error {
+	typeName, err := i.commands.Run(ctx, "/usr/bin/systemctl", "show", "roundos.service", "--property=Type", "--value")
+	if err != nil || strings.TrimSpace(string(typeName)) != "notify" {
+		return errors.New("replacement service lacks managed readiness")
+	}
 	if _, err := i.commands.Run(ctx, "/usr/bin/systemctl", "start", "roundos.service"); err != nil {
 		return err
 	}
-	_, err := i.commands.Run(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "roundos.service")
+	_, err = i.commands.Run(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "roundos.service")
 	return err
 }
 
@@ -439,6 +503,11 @@ func (i *Installer) rollback(ctx context.Context, transaction *installTransactio
 // Recover runs before roundos.service during boot. If an active installer holds
 // the lock, its deliberate service restart proceeds without a competing repair.
 func (i *Installer) Recover(ctx context.Context) error {
+	if _, err := os.Lstat(i.transactionFile()); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	lock, err := i.lock()
 	if errors.Is(err, ErrInstallBusy) {
 		return nil
@@ -448,7 +517,7 @@ func (i *Installer) Recover(ctx context.Context) error {
 	}
 	defer lock.Close()
 	if err := i.cleanupStages(); err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "RoundOS recovery could not clean abandoned downloads: %v\n", err)
 	}
 	var transaction installTransaction
 	if err := readInstallJSON(i.transactionFile(), &transaction); errors.Is(err, os.ErrNotExist) {
@@ -465,10 +534,21 @@ func (i *Installer) Recover(ctx context.Context) error {
 	return i.recoverLocked(ctx, &transaction, false)
 }
 
-func (i *Installer) recoverLocked(ctx context.Context, transaction *installTransaction, restart bool) error {
+func (i *Installer) recoverLocked(ctx context.Context, transaction *installTransaction, restart bool) (recoveryErr error) {
 	if transaction.Status.Phase == "queued" || transaction.Status.Phase == "preparing" {
-		return i.phase(transaction, "failed", "Update preparation was interrupted; the installed version is unchanged")
+		err := i.phase(transaction, "failed", "Update preparation was interrupted; the installed version is unchanged")
+		if err != nil && !restart {
+			fmt.Fprintf(os.Stderr, "RoundOS installation is unchanged; interrupted preparation outcome persistence failed: %v\n", err)
+			return nil
+		}
+		return err
 	}
+	defer func() {
+		if recoveryErr != nil && transaction.Status.Phase != "recovery_required" {
+			transaction.Detail += "\nRecovery: " + recoveryErr.Error()
+			recoveryErr = errors.Join(recoveryErr, i.phase(transaction, "recovery_required", "Recovery needs attention; connect over SSH and inspect the update log"))
+		}
+	}()
 	if !i.releasePath(transaction.OldCurrent) || !i.releasePath(transaction.OldController) ||
 		(transaction.OldPrevious != "" && !i.releasePath(transaction.OldPrevious)) ||
 		!i.releasePath(transaction.NewRelease) || len(transaction.OldUnits) != len(managedUpdateUnits()) {
@@ -480,7 +560,12 @@ func (i *Installer) recoverLocked(ctx context.Context, transaction *installTrans
 			return errors.New("invalid service-unit recovery backup")
 		}
 	}
-	for _, release := range []string{transaction.OldCurrent, transaction.OldController, transaction.OldPrevious} {
+	if transaction.OldPrevious != "" {
+		if err := trustedInstalledPath(transaction.OldPrevious, true); err != nil {
+			return err
+		}
+	}
+	for _, release := range []string{transaction.OldCurrent, transaction.OldController} {
 		if release == "" {
 			continue
 		}
@@ -497,7 +582,11 @@ func (i *Installer) recoverLocked(ctx context.Context, transaction *installTrans
 		if err != nil {
 			return err
 		}
-		for _, name := range []string{"bin/roundd", "bin/round-clock", "bin/round-timer"} {
+		names := []string{"bin/roundd"}
+		if release == transaction.OldCurrent {
+			names = append(names, "bin/round-clock", "bin/round-timer")
+		}
+		for _, name := range names {
 			if err := trustedInstalledPath(filepath.Join(release, name), false); err != nil {
 				return err
 			}
@@ -507,7 +596,9 @@ func (i *Installer) recoverLocked(ctx context.Context, transaction *installTrans
 		}
 	}
 	if err := i.phase(transaction, "recovering", "Restoring the previous release"); err != nil {
-		return err
+		// The existing durable switching record already permits replay. A
+		// progress-write failure must not prevent restoring a healthy shell.
+		transaction.Detail += "\nRecovery progress: " + err.Error()
 	}
 	restore := func() error {
 		if restart {
@@ -545,6 +636,9 @@ func (i *Installer) recoverLocked(ctx context.Context, transaction *installTrans
 		if _, err := i.commands.Run(ctx, "/usr/bin/systemctl", "daemon-reload"); err != nil {
 			return err
 		}
+		if _, err := i.commands.Run(ctx, "/usr/bin/systemctl", "reset-failed", "roundos.service"); err != nil {
+			return err
+		}
 		if restart {
 			if err := i.startReady(ctx); err != nil {
 				return err
@@ -559,13 +653,59 @@ func (i *Installer) recoverLocked(ctx context.Context, transaction *installTrans
 				return err
 			}
 		}
+		if err := i.clearInterruptedLinks(transaction); err != nil {
+			return err
+		}
 		return syncStateDirectory(filepath.Join(i.root, "releases"))
 	}
 	if err := restore(); err != nil {
 		transaction.Detail += "\nRecovery: " + err.Error()
 		return errors.Join(err, i.phase(transaction, "recovery_required", "Recovery needs attention; connect over SSH and inspect the update log"))
 	}
-	return i.phase(transaction, "rolled_back", "The previous release has been restored")
+	err := i.phase(transaction, "rolled_back", "The previous release has been restored")
+	if err != nil && !restart {
+		// Files and units are restored and durable; refusing the boot unit
+		// here would prevent PID 1 from starting the healthy restored shell.
+		fmt.Fprintf(os.Stderr, "RoundOS recovery restored the previous release; outcome persistence failed: %v\n", err)
+		return nil
+	}
+	return err
+}
+
+func (i *Installer) effectiveManagedUnit(ctx context.Context, name string) error {
+	fragment, err := i.commands.Run(ctx, "/usr/bin/systemctl", "show", name, "--property=FragmentPath", "--value")
+	if err != nil || strings.TrimSpace(string(fragment)) != filepath.Join(filepath.Dir(i.unitFile), name) {
+		return errors.New("unexpected systemd unit source requires a manual update")
+	}
+	dropIns, err := i.commands.Run(ctx, "/usr/bin/systemctl", "show", name, "--property=DropInPaths", "--value")
+	if err != nil || strings.TrimSpace(string(dropIns)) != "" {
+		return errors.New("systemd overrides require a manual update")
+	}
+	return nil
+}
+
+func (i *Installer) clearInterruptedLinks(transaction *installTransaction) error {
+	for _, name := range []string{".previous.new", ".current.new", ".update-controller.new"} {
+		file := filepath.Join(i.root, name)
+		info, err := os.Lstat(file)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return errors.New("unexpected interrupted installation artifact")
+		}
+		target, err := os.Readlink(file)
+		if err != nil || (target != transaction.OldCurrent && target != transaction.NewRelease && target != transaction.OldController) {
+			return errors.New("untrusted interrupted installation link")
+		}
+		if err := os.Remove(file); err != nil {
+			return err
+		}
+	}
+	return syncStateDirectory(i.root)
 }
 
 func (i *Installer) commitController(ctx context.Context, transaction *installTransaction, p *Package) error {

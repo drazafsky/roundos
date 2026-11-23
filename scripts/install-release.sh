@@ -142,6 +142,9 @@ install -o root -g root -m 0644 "$ROOT/systemd/roundos-update-recover.service" "
 chmod 0755 "$stage"
 mv -- "$stage" "$DEST"
 stage=''
+# Persist release contents and directory entries before making them reachable
+# through current or the independent recovery-controller link (GNU syncfs).
+sync -f "$DEST"
 # Keep existing managed release as rollback target if one exists.
 if [ -L /opt/roundos/current ]; then
   old=$(readlink -f /opt/roundos/current)
@@ -157,13 +160,23 @@ elif [ -e /opt/roundos/current ]; then
 fi
 ln -s "$DEST" /opt/roundos/.current.new
 mv -Tf /opt/roundos/.current.new /opt/roundos/current
-install -o root -g root -m 0644 "$ROOT/systemd/roundos.service" "$unit"
 install -o root -g root -m 0755 "$ROOT/scripts/roundosctl.sh" /usr/local/sbin/roundosctl
 if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
-  install -o root -g root -m 0644 "$ROOT/systemd/roundos-update.service" /etc/systemd/system/roundos-update.service
-  install -o root -g root -m 0644 "$ROOT/systemd/roundos-update-recover.service" /etc/systemd/system/roundos-update-recover.service
   ln -s "$DEST" /opt/roundos/.update-controller.new
   mv -Tf /opt/roundos/.update-controller.new /opt/roundos/update-controller
+  sync -f /opt/roundos
+  # Install dependencies before the shell unit that requires them. Atomic
+  # replacement preserves a readable boot unit across interruption.
+  for update_unit in roundos-update.service roundos-update-recover.service roundos.service; do
+    unit_temp=$(mktemp /etc/systemd/system/.roundos-unit.XXXXXXXX)
+    install -o root -g root -m 0644 "$ROOT/systemd/$update_unit" "$unit_temp"
+    sync -f "$unit_temp"
+    unit_target="/etc/systemd/system/$update_unit"
+    if [ "$update_unit" = roundos.service ]; then unit_target=$unit; fi
+    mv -Tf "$unit_temp" "$unit_target"
+    sync -f /etc/systemd/system
+  done
+  systemctl daemon-reload
 fi
-systemctl daemon-reload
+# The managed Go helper replaces the shell unit atomically after this returns.
 echo "Installed $DEST; service NOT enabled. Review docs and run: sudo roundosctl activate"

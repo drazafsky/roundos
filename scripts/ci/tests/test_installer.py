@@ -19,7 +19,7 @@ class InstallerIdentityTests(unittest.TestCase):
         (self.root / 'scripts').mkdir()
         script = (ROOT / 'scripts/install-release.sh').read_text()
         script = script.replace('/etc/systemd/system/roundos.service', str(self.root / 'installed.service'))
-        script = script.replace('/etc/systemd/system/', str(self.root / 'installed-units') + '/')
+        script = script.replace('/etc/systemd/system', str(self.root / 'installed-units'))
         script = script.replace('/opt/roundos', str(self.root / 'managed'))
         (self.root / 'scripts/install-release.sh').write_text(script)
         (self.root / 'systemd').mkdir()
@@ -45,9 +45,9 @@ class InstallerIdentityTests(unittest.TestCase):
         path.write_text('#!/bin/sh\n' + body + '\n')
         path.chmod(0o755)
 
-    def run_installer(self):
+    def run_installer(self, **extra_env):
         env = dict(os.environ, PATH=str(self.mockbin) + os.pathsep + os.environ['PATH'],
-                   SYSTEMCTL_CALL_LOG=str(self.systemctl_calls))
+                   SYSTEMCTL_CALL_LOG=str(self.systemctl_calls), **extra_env)
         return subprocess.run(['sh', str(self.root / 'scripts/install-release.sh')],
                               env=env, capture_output=True, text=True, check=False)
 
@@ -182,6 +182,61 @@ class InstallerIdentityTests(unittest.TestCase):
                 result = self.run_installer()
                 self.assertEqual(result.returncode, 97)
                 self.assertIn('REACHED_SETUP', result.stderr)
+
+    def complete_install_fixture(self):
+        script = self.root / 'scripts/install-release.sh'
+        text = script.read_text()
+        for real, local in (('/etc/roundos', 'etc-roundos'), ('/var/lib/roundos', 'state'),
+                            ('/usr/local/sbin', 'localbin'), ('/root/.local/state/roundos', 'old-state')):
+            text = text.replace(real, str(self.root / local))
+        script.write_text(text)
+        (self.root / 'installed-units').mkdir()
+        (self.root / 'localbin').mkdir()
+        (self.root / 'config').mkdir()
+        (self.root / 'config/gestures.example.json').write_text('{}')
+        (self.root / 'README.md').write_text('fixture')
+        setup = self.root / 'scripts/setup-app-user.sh'
+        setup.write_text('#!/bin/sh\nexit 0\n')
+        setup.chmod(0o755)
+        (self.root / 'scripts/roundosctl.sh').write_text('#!/bin/sh\n')
+        self.command('systemctl', 'if [ "$1" = is-active ]; then echo inactive; exit 3; fi')
+        # Run the real installer in private temporary paths without root chown.
+        wrapper = self.root / 'install-wrapper.py'
+        wrapper.write_text('import os,sys\nargs=iter(sys.argv[1:]); kept=[]\n'
+                           'for arg in args:\n'
+                           ' if arg in ("-o","-g"): next(args)\n'
+                           ' else: kept.append(arg)\n'
+                           'os.execv("/usr/bin/install", ["install"]+kept)\n')
+        self.command('install', 'exec python3 "' + str(wrapper) + '" "$@"')
+        self.sync_log = self.root / 'sync.calls'
+        self.command('sync', 'printf "%s\\n" "$*" >> "' + str(self.sync_log) + '"')
+
+    def test_complete_manual_install_sets_controller_and_all_units(self):
+        self.complete_install_fixture()
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dest = self.root / 'managed/releases' / VERSION
+        self.assertEqual((self.root / 'managed/update-controller').resolve(), dest)
+        self.assertEqual((self.root / 'installed.service').read_bytes(),
+                         (self.root / 'systemd/roundos.service').read_bytes())
+        for name in ('roundos-update.service', 'roundos-update-recover.service'):
+            self.assertEqual((self.root / 'installed-units' / name).read_bytes(),
+                             (self.root / 'systemd' / name).read_bytes())
+        self.assertIn('-f ' + str(dest), self.sync_log.read_text().splitlines())
+        self.assertEqual(self.systemctl_calls.read_text().splitlines(),
+                         ['is-active roundos.service', 'daemon-reload'])
+
+    def test_managed_transaction_defers_unit_and_controller_commit(self):
+        self.complete_install_fixture()
+        installed = self.root / 'installed.service'
+        original = (self.root / 'systemd/roundos.service').read_bytes()
+        installed.write_bytes(original)
+        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(installed.read_bytes(), original)
+        self.assertFalse((self.root / 'managed/update-controller').exists())
+        self.assertFalse((self.root / 'installed-units/roundos-update.service').exists())
+        self.assertEqual(self.systemctl_calls.read_text().splitlines(), ['is-active roundos.service'])
 
 
 if __name__ == '__main__':

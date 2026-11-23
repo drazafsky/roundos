@@ -25,9 +25,18 @@ binaries and documentation; they do not contain the source/test tools.
 Set CANDIDATE_VERSION to the verified 0.6.0-dev version and CANDIDATE_COMMIT
 to its full 40-character commit. The installed roundd build ID must match it.
 
-Before the first installation, preserve the original root-owned control files:
+The baseline must actually run 0.5.0 with its original control files. If the Pi
+has already been upgraded, wait until its current testing finishes, retain that
+working release, and restore the preserved managed 0.5.0 with control files from
+the original SHA-256-verified archive. Newer control files cannot substitute for
+the originals. The checks below stop before creating a backup if that baseline
+has not been restored.
+
+Before the first M7 candidate installation, preserve the verified originals:
 
 ```sh
+/opt/roundos/current/bin/roundd -version | grep -Fx 'RoundOS 0.5.0 (0.5.0)' && \
+printf '%s\n' '06453b95893557e389483a3e06cac2926717d245f7895ef362d3364531c0285c  /etc/systemd/system/roundos.service' '92ddf2e48ca905970f0b9cf45be299b2c64d20d07b3f753e58efedf4e94cdf06  /usr/local/sbin/roundosctl' | sha256sum -c - && \
 sudo mkdir -m 0700 /var/lib/roundos/m7-recovery && \
 sudo cp -p /etc/systemd/system/roundos.service /var/lib/roundos/m7-recovery/roundos.service && \
 sudo cp -p /usr/local/sbin/roundosctl /var/lib/roundos/m7-recovery/roundosctl && \

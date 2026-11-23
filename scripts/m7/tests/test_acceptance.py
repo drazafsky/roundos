@@ -108,6 +108,17 @@ class GateTests(unittest.TestCase):
             self.assertEqual(result['scenarios']['gallery_flick']['status'], 'FAIL', change)
             self.assertEqual(result['gate'], 'FAIL', change)
 
+    def test_mixed_latency_summaries_cannot_hide_known_failures(self):
+        for reverse in (False, True):
+            self.setUp()
+            run = self.after['gallery_flick']['runs'][0]
+            valid = dict(run['renderer_metrics'][0], **{'input-to-present-p95': '20ms'})
+            missing = dict(valid, **{'input-to-present-p95': '0s', 'input_samples': 0})
+            run['renderer_metrics'] = [missing, valid] if reverse else [valid, missing]
+            self.assertEqual(self.report()['gate'], 'FAIL')
+            valid['input-to-present-p95'] = '10ms'
+            self.assertEqual(self.report()['gate'], 'PENDING')
+
     def test_one_known_reload_failure_survives_incomplete_recordings(self):
         failed = {'method': 'save-gesture-to-visible-frame', 'fps': 60, 'frames': 30}
         for values in ([failed], [failed, {}], [failed, {}, {}]):

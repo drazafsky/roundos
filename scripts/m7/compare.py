@@ -115,15 +115,16 @@ def counter(run, field, count):
 def latency_value(run, scenario):
     binding = run.get('m7_identity', {})
     metrics = run.get('renderer_metrics', [])
-    values = [m0.ms(item.get('input-to-present-p95')) for item in metrics]
-    if not values or any(not number(value) or scenario != 'idle' and value <= 0 for value in values):
-        return None
-    if any(item.get('run_scoped') is not True or item.get('service_pid') != binding.get('service_pid')
-           or item.get('boot_id') != binding.get('boot_id')
-           or type(item.get('input_samples')) is not int or item['input_samples'] < (0 if scenario == 'idle' else 1)
-           for item in metrics):
-        return None
-    return max(values)
+    valid = []
+    for item in metrics:
+        value = m0.ms(item.get('input-to-present-p95'))
+        if (not number(value) or scenario != 'idle' and value <= 0
+                or item.get('run_scoped') is not True or item.get('service_pid') != binding.get('service_pid')
+                or item.get('boot_id') != binding.get('boot_id')
+                or type(item.get('input_samples')) is not int or item['input_samples'] < (0 if scenario == 'idle' else 1)):
+            continue
+        valid.append(value)
+    return (max(valid) if valid else None), bool(metrics) and len(valid) == len(metrics)
 
 
 def budget(before, after, factor=1, allowance=0, *, measure=True):
@@ -151,12 +152,14 @@ def compare(baseline_identity, candidate_identity, baseline, candidate, observat
         comparisons = []
         for ordinal in (1, 2, 3):
             before, after = old.get(ordinal, {}), new.get(ordinal, {})
-            a, b = latency_value(before, scenario), latency_value(after, scenario)
+            (a, old_complete), (b, new_complete) = latency_value(before, scenario), latency_value(after, scenario)
             old_cpu, new_cpu = counter(before, 'shell_cpu_percent_mean', 'shell_cpu_valid_records'), counter(after, 'shell_cpu_percent_mean', 'shell_cpu_valid_records')
             old_rss, new_rss = counter(before, 'shell_rss_kib_peak', 'shell_rss_valid_records'), counter(after, 'shell_rss_kib_peak', 'shell_rss_valid_records')
             metrics = {'latency': budget(a, b, 1.1, measure=scenario != 'idle'),
                        'cpu': budget(old_cpu, new_cpu, 1.1, measure=scenario == 'idle'),
                        'rss': budget(old_rss, new_rss, allowance=8192)}
+            if metrics['latency'] == 'PASS' and not (old_complete and new_complete):
+                metrics['latency'] = 'PENDING'
             comparisons.append({'run': ordinal, 'baseline_input_p95_ms': a, 'candidate_input_p95_ms': b,
                                 'baseline_cpu_percent': old_cpu, 'candidate_cpu_percent': new_cpu,
                                 'baseline_rss_kib': old_rss, 'candidate_rss_kib': new_rss,

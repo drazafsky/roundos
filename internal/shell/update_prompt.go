@@ -57,7 +57,7 @@ func (m *Model) observeUpdateResult(status update.Status) {
 // MaybePromptUpdate is called from the UI event loop after navigation. Deferring
 // editors, pickers, app dialogs and critical alerts preserves their interaction.
 func (m *Model) MaybePromptUpdate() bool {
-	if m.Updates.PendingRelease == nil || m.Page == TextEditor || m.Page == DiscardPrompt ||
+	if m.Updates.PendingRelease == nil || m.Page == TextEditor || m.Page == DiscardPrompt || m.Page == WiFiConfirm ||
 		m.Page == Accessibility || m.Page == Switcher || m.Page == NotificationCenter || m.Page == NotificationDetail ||
 		m.updatePromptInNavigation() || m.PickerID != "" || m.hasVisibleDialog() || m.HasCritical() || m.EditingWidget != "" {
 		return false

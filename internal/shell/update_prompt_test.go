@@ -246,6 +246,19 @@ func TestUpdatePromptDefersEditorsAndCriticalAlerts(t *testing.T) {
 	}
 }
 
+func TestUpdatePromptWaitsForWiFiConfirmation(t *testing.T) {
+	m := New()
+	m.Select(WiFiConfirm)
+	m.SetUpdateStatus(availableStatus(1, "0.6.0", "", false, ""))
+	if m.MaybePromptUpdate() || m.Page != WiFiConfirm {
+		t.Fatal("update interrupted Wi-Fi confirmation")
+	}
+	m.Back()
+	if !m.MaybePromptUpdate() || m.Updates.ReturnPage != WiFiPage {
+		t.Fatal("deferred notice was lost after confirmation closed")
+	}
+}
+
 func TestMissingNotesWrappingAndAppearanceReflow(t *testing.T) {
 	m := New()
 	m.SetUpdateStatus(availableStatus(1, "0.6.0", "", true, ""))

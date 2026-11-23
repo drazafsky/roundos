@@ -14,13 +14,30 @@ import (
 const UpdatesPage = WiFiConfirm + 1
 
 type UpdateState struct {
-	Status   update.Status
-	Ready    bool
-	Focus    int
-	Pending  *update.Command
-	Message  string
-	InFlight uint64
-	NextID   uint64
+	Installation          update.InstallationState
+	PendingInstall        *update.InstallCommand
+	InstallInFlight       uint64
+	InstallRequestVersion string
+	InstallQueueError     bool
+	SeenSequence          uint64
+	PendingRelease        *update.Release
+	PendingManual         bool
+	Notice                *update.Release
+	ReturnPage            int
+	PromptFocus           int
+	NotesOffset           int
+	NotesDragOrigin       int
+	NotesDragging         bool
+	Notes                 *notesDocument
+	IgnoreRequestID       uint64
+	IgnoreRequestVersion  string
+	Status                update.Status
+	Ready                 bool
+	Focus                 int
+	Pending               *update.Command
+	Message               string
+	InFlight              uint64
+	NextID                uint64
 }
 
 func (m *Model) OpenUpdates() bool {
@@ -29,13 +46,27 @@ func (m *Model) OpenUpdates() bool {
 }
 
 func (m *Model) SetUpdateStatus(status update.Status) bool {
+	oldPage := m.Page
 	m.Updates.Status = status
 	if status.LastCommandID == m.Updates.InFlight {
 		m.Updates.InFlight = 0
 	}
 	m.Updates.Ready = true
 	m.Updates.Message = ""
-	return m.Page == UpdatesPage
+	m.observeUpdateResult(status)
+	if m.Updates.IgnoreRequestID != 0 && status.LastCommandID == m.Updates.IgnoreRequestID {
+		version := m.Updates.IgnoreRequestVersion
+		if status.CommandErr == nil && status.IgnoredVersion == version {
+			m.Updates.IgnoreRequestID = 0
+			m.Updates.IgnoreRequestVersion = ""
+			if m.Updates.Notice != nil && m.Updates.Notice.Version == version {
+				m.retireUpdatePrompt()
+			}
+		} else if m.Updates.Notice != nil && m.Updates.Notice.Version == version {
+			m.Updates.Message = "COULD NOT IGNORE RELEASE - TRY AGAIN"
+		}
+	}
+	return oldPage == UpdatesPage || oldPage == UpdatePrompt || oldPage == ReleaseNotes || oldPage == Switcher || oldPage != m.Page
 }
 
 func (m *Model) TakeUpdateRequest() *update.Command {
@@ -46,6 +77,8 @@ func (m *Model) TakeUpdateRequest() *update.Command {
 
 func (m *Model) UpdateRequestFailed() {
 	m.Updates.InFlight = 0
+	m.Updates.IgnoreRequestID = 0
+	m.Updates.IgnoreRequestVersion = ""
 	m.Updates.Message = "UPDATE SERVICE BUSY - TRY AGAIN"
 }
 
@@ -226,4 +259,149 @@ func (m *Model) DrawUpdates(im *image.RGBA, now time.Time) {
 		textTheme(im, 240, y+6, 2, label, color, true, m.Appearance)
 		textTheme(im, 240, y+29, 1, details[i], p.SecondaryText, true, m.Appearance)
 	}
+	if message := m.installationSummary(); message != "" {
+		textTheme(im, 240, 431, 1, message, p.SecondaryText, true, m.Appearance)
+	}
+}
+
+func (m *Model) SetInstallationStatus(status update.InstallationState) bool {
+	if m.Updates.Message == m.installationDisabledReason() {
+		m.Updates.Message = ""
+	}
+	m.Updates.Installation = status
+	if m.Updates.InstallInFlight != 0 && status.LastCommandID == m.Updates.InstallInFlight {
+		m.Updates.InstallInFlight = 0
+	}
+	return m.Page == UpdatesPage || m.Page == UpdatePrompt
+}
+
+func (m *Model) TakeInstallRequest() *update.InstallCommand {
+	request := m.Updates.PendingInstall
+	m.Updates.PendingInstall = nil
+	return request
+}
+
+func (m *Model) InstallRequestFailed() {
+	m.Updates.InstallInFlight = 0
+	m.Updates.InstallQueueError = true
+}
+
+func (m *Model) installationAllowed() bool {
+	s := m.Updates.Installation
+	return s.Ready && s.Supported && s.Err == nil && !s.Status.InProgress() && s.Status.Phase != "recovery_required" && m.Updates.InstallInFlight == 0 && m.Updates.PendingInstall == nil
+}
+
+func (m *Model) installationDisabledReason() string {
+	s := m.Updates.Installation
+	if s.Status.Phase == "recovery_required" {
+		return "UPDATE NEEDS SSH RECOVERY"
+	}
+	if s.Status.InProgress() || m.Updates.InstallInFlight != 0 {
+		return "UPDATE ALREADY IN PROGRESS"
+	}
+	if !s.Ready {
+		return "CHECKING INSTALL SUPPORT"
+	}
+	if !s.Supported && s.UnsupportedReason != "" {
+		return "INSTALL NEEDS A MANAGED DEVICE"
+	}
+	if s.Err != nil {
+		return "UPDATE STATUS UNAVAILABLE"
+	}
+	return "INSTALL NEEDS A MANAGED DEVICE"
+}
+
+func (m *Model) installationSummary() string {
+	s := m.Updates.Installation
+	if s.Status.Phase == "recovery_required" {
+		return "UPDATE NEEDS SSH"
+	}
+	if s.Err != nil && (s.Status.ID != "" || s.Supported) {
+		return "UPDATE STATUS ERROR"
+	}
+	if s.Status.InProgress() {
+		switch s.Status.Phase {
+		case "queued", "preparing":
+			return "DOWNLOADING UPDATE"
+		case "recovering":
+			return "RESTORING VERSION"
+		default:
+			return "INSTALLING UPDATE"
+		}
+	}
+	if m.Updates.InstallQueueError {
+		return "UPDATE SERVICE BUSY"
+	}
+	if m.Updates.InstallInFlight != 0 {
+		return "PREPARING UPDATE"
+	}
+	if m.installationCommandErrorRelevant() {
+		return "UPDATE START FAILED"
+	}
+	switch s.Status.Phase {
+	case "queued", "preparing":
+		return "DOWNLOADING UPDATE"
+	case "switching", "starting", "committing":
+		return "INSTALLING UPDATE"
+	case "recovering":
+		return "RESTORING VERSION"
+	case "succeeded":
+		return "UPDATE INSTALLED"
+	case "rolled_back":
+		return "UPDATE ROLLED BACK"
+	case "failed":
+		return "UPDATE FAILED"
+	}
+	return ""
+}
+
+func (m *Model) installationMessage() string {
+	s := m.Updates.Installation
+	if s.Status.Phase == "recovery_required" {
+		return "UPDATE NEEDS SSH RECOVERY"
+	}
+	if s.Err != nil && (s.Status.ID != "" || s.Supported) {
+		return "UPDATE STATUS UNAVAILABLE - USE SSH"
+	}
+	if s.Status.InProgress() {
+		switch s.Status.Phase {
+		case "queued", "preparing":
+			return "DOWNLOADING AND VERIFYING UPDATE"
+		case "recovering":
+			return "RESTORING PREVIOUS VERSION"
+		default:
+			return "INSTALLING - ROUNDOS WILL RESTART"
+		}
+	}
+	if m.Updates.InstallQueueError {
+		return "UPDATE SERVICE BUSY - TRY AGAIN"
+	}
+	if m.Updates.InstallInFlight != 0 {
+		return "PREPARING UPDATE"
+	}
+	if m.installationCommandErrorRelevant() {
+		return "COULD NOT START UPDATE - TRY AGAIN"
+	}
+	switch s.Status.Phase {
+	case "queued", "preparing":
+		return "DOWNLOADING AND VERIFYING UPDATE"
+	case "switching", "starting", "committing":
+		return "INSTALLING - ROUNDOS WILL RESTART"
+	case "recovering":
+		return "RESTORING PREVIOUS VERSION"
+	case "succeeded":
+		return "UPDATE INSTALLED"
+	case "rolled_back":
+		return "ROLLED BACK TO PREVIOUS VERSION"
+	case "failed":
+		return "PREPARATION FAILED - TRY AGAIN"
+	case "recovery_required":
+		return "UPDATE NEEDS SSH RECOVERY"
+	}
+	return ""
+}
+
+func (m *Model) installationCommandErrorRelevant() bool {
+	s := m.Updates.Installation
+	return s.CommandErr != nil && (s.Status.ID == "" || s.Status.ID != s.CommandTransactionID)
 }

@@ -27,6 +27,69 @@ case "$actual" in
   "RoundOS $VERSION ("*")") : ;;
   *) echo "Wrong roundd build: $actual" >&2; exit 1;;
 esac
+protocol=$("$ROOT/roundd" -update-protocol)
+if [ "$protocol" != roundos-update-v1 ]; then
+  echo 'Build lacks managed update/recovery support' >&2
+  exit 1
+fi
+for update_unit in roundos.service roundos-update.service roundos-update-recover.service; do
+  if [ ! -f "$ROOT/systemd/$update_unit" ] || [ -L "$ROOT/systemd/$update_unit" ]; then
+    echo "Missing or untrusted service template: $update_unit" >&2; exit 1
+  fi
+done
+check_update_transaction() {
+  record=$1
+  if [ ! -e "$record" ] && [ ! -L "$record" ]; then return; fi
+  if [ -L "$record" ] || [ ! -f "$record" ]; then
+    echo 'Untrusted update recovery record; recover over SSH first' >&2; exit 1
+  fi
+  python3 - "$record" <<'PY'
+import json, os, re, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError()
+        data = source.read(256 * 1024 + 1)
+    if len(data) > 256 * 1024:
+        raise ValueError()
+    value = json.loads(data)
+    status = value.get('status') if isinstance(value, dict) else None
+    if not isinstance(status, dict) or not re.fullmatch(r'[0-9a-f]{32}', status.get('id', '')):
+        raise ValueError()
+    version = status.get('version', '')
+    if len(version) > 128 or not re.fullmatch(
+            r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', version):
+        raise ValueError()
+    if any(int(part) > 2**64 - 1 for part in version.split('+', 1)[0].split('.')):
+        raise ValueError()
+    phase = status.get('phase')
+    if phase not in ('queued', 'preparing', 'switching', 'starting', 'committing',
+                     'recovering', 'recovery_required', 'succeeded', 'rolled_back', 'failed'):
+        raise ValueError()
+except (OSError, ValueError, TypeError):
+    sys.exit('Invalid update recovery record; recover over SSH first')
+if phase not in ('succeeded', 'rolled_back', 'failed'):
+    sys.exit('Pending update transaction requires recovery over SSH first')
+PY
+}
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
+  for dir in /var/lib/roundos /var/lib/roundos/shell-data; do
+    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+      echo "Refusing untrusted update state directory: $dir" >&2; exit 1
+    fi
+  done
+  mkdir -p -m 0700 /var/lib/roundos/shell-data
+  lock=/var/lib/roundos/shell-data/update-install.lock
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    echo 'Refusing untrusted update lock' >&2; exit 1
+  fi
+  if [ ! -e "$lock" ]; then (set -C; : > "$lock") || exit 1; fi
+  exec 9< "$lock"
+  if ! flock -n 9; then echo 'Another update installer is running' >&2; exit 1; fi
+  check_update_transaction /var/lib/roundos/shell-data/update-install.json
+fi
 unit=/etc/systemd/system/roundos.service
 if [ -f "$unit" ] && ! cmp -s "$ROOT/systemd/roundos.service" "$unit"; then
   # Permit a managed template upgrade, including the original unmodified
@@ -55,6 +118,38 @@ if [ -f "$unit" ] && ! cmp -s "$ROOT/systemd/roundos.service" "$unit"; then
   fi
 fi
 if [ -L "$unit" ]; then echo 'Refusing a symlinked service unit' >&2;exit 1;fi
+# The controller and its units remain unchanged during a live transaction. The
+# independent helper upgrades them only after the replacement shell is ready.
+check_update_unit() {
+  update_unit=$1
+  update_target=/etc/systemd/system/$update_unit
+  if [ -L "$update_target" ]; then echo 'Refusing a symlinked update service unit' >&2; exit 1; fi
+  if [ ! -e "$update_target" ] || cmp -s "$ROOT/systemd/$update_unit" "$update_target"; then return; fi
+  for update_link in current previous update-controller; do
+    update_prior=$(readlink -f "/opt/roundos/$update_link" 2>/dev/null || true)
+    case "$update_prior" in
+      /opt/roundos/releases/*)
+        if [ -f "$update_prior/$update_unit" ] && [ ! -L "$update_prior/$update_unit" ] &&
+           [ -f "$update_prior/SHA256SUMS" ] && [ ! -L "$update_prior/SHA256SUMS" ] &&
+           (cd "$update_prior" && awk -v name="$update_unit" 'NF == 2 && $2 == name && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ {printf "%s  %s\n", $1, $2}' SHA256SUMS | sha256sum -c --status -) &&
+           cmp -s "$update_prior/$update_unit" "$update_target"; then return; fi;;
+    esac
+  done
+  echo "Refusing to replace a manually edited update unit: $update_target" >&2; exit 1
+}
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
+  check_update_unit roundos-update.service
+  check_update_unit roundos-update-recover.service
+  if [ -L /opt/roundos/update-controller ]; then
+    update_controller=$(readlink -f /opt/roundos/update-controller)
+    case "$update_controller" in
+      /opt/roundos/releases/*) [ -d "$update_controller" ] || { echo 'Missing update controller release' >&2; exit 1; };;
+      *) echo 'Refusing an untrusted update controller link' >&2; exit 1;;
+    esac
+  elif [ -e /opt/roundos/update-controller ]; then
+    echo 'Refusing a non-link update controller' >&2; exit 1
+  fi
+fi
 service_state=$(systemctl is-active roundos.service 2>/dev/null || true)
 case "$service_state" in
   inactive|failed) :;;
@@ -85,8 +180,23 @@ fi
 if [ ! -e /etc/roundos/gestures.json ]; then
   install -o root -g root -m 0644 "$ROOT/config/gestures.example.json" /etc/roundos/gestures.json
 fi
-stage=$(mktemp -d "$RELEASES/.install.XXXXXXXX")
-cleanup() { if [ -n "${stage:-}" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi; }
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" = 1 ] && [ -n "${ROUNDOS_UPDATE_STAGE:-}" ]; then
+  stage=${ROUNDOS_UPDATE_STAGE:-}
+  case "$stage" in "$RELEASES"/.install-update-*) stage_id=${stage##*/.install-update-};;
+    *) echo 'Missing or untrusted managed installer stage' >&2; exit 1;; esac
+  case "$stage_id" in ''|*[!0-9a-f]*) echo 'Invalid installer stage ID' >&2; exit 1;; esac
+  [ "${#stage_id}" -eq 32 ] || { echo 'Invalid installer stage ID length' >&2; exit 1; }
+  mkdir -m 0700 "$stage"
+else
+  # Existing roundos-update-v1 controllers do not pass an explicit stage path.
+  # Keep their installer contract; new controllers always record the path.
+  stage=$(mktemp -d "$RELEASES/.install.XXXXXXXX")
+fi
+ctl_temp=''
+cleanup() {
+  if [ -n "${stage:-}" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi
+  if [ -n "${ctl_temp:-}" ]; then rm -f -- "$ctl_temp"; fi
+}
 trap cleanup EXIT HUP INT TERM
 install -d -o root -g root -m 0755 "$stage/bin"
 for bin in roundd round-clock round-timer; do
@@ -94,10 +204,15 @@ for bin in roundd round-clock round-timer; do
 done
 install -o root -g root -m 0644 "$ROOT/README.md" "$stage/README.md"
 install -o root -g root -m 0644 "$ROOT/systemd/roundos.service" "$stage/roundos.service"
-( cd "$stage" && sha256sum bin/roundd bin/round-clock bin/round-timer roundos.service > SHA256SUMS && sha256sum -c SHA256SUMS )
+install -o root -g root -m 0644 "$ROOT/systemd/roundos-update.service" "$stage/roundos-update.service"
+install -o root -g root -m 0644 "$ROOT/systemd/roundos-update-recover.service" "$stage/roundos-update-recover.service"
+( cd "$stage" && sha256sum bin/roundd bin/round-clock bin/round-timer roundos.service roundos-update.service roundos-update-recover.service > SHA256SUMS && sha256sum -c SHA256SUMS )
 chmod 0755 "$stage"
 mv -- "$stage" "$DEST"
 stage=''
+# Persist release contents and directory entries before making them reachable
+# through current or the independent recovery-controller link (GNU syncfs).
+sync -f "$DEST"
 # Keep existing managed release as rollback target if one exists.
 if [ -L /opt/roundos/current ]; then
   old=$(readlink -f /opt/roundos/current)
@@ -113,7 +228,29 @@ elif [ -e /opt/roundos/current ]; then
 fi
 ln -s "$DEST" /opt/roundos/.current.new
 mv -Tf /opt/roundos/.current.new /opt/roundos/current
-install -o root -g root -m 0644 "$ROOT/systemd/roundos.service" "$unit"
-install -o root -g root -m 0755 "$ROOT/scripts/roundosctl.sh" /usr/local/sbin/roundosctl
-systemctl daemon-reload
+# Preserve a complete SSH recovery command across failed or interrupted copies.
+ctl_temp=$(mktemp /usr/local/sbin/.roundosctl.XXXXXXXX)
+install -o root -g root -m 0755 "$ROOT/scripts/roundosctl.sh" "$ctl_temp"
+sync -f "$ctl_temp"
+mv -Tf "$ctl_temp" /usr/local/sbin/roundosctl
+ctl_temp=''
+sync -f /usr/local/sbin
+if [ "${ROUNDOS_UPDATE_TRANSACTION:-0}" != 1 ]; then
+  ln -s "$DEST" /opt/roundos/.update-controller.new
+  mv -Tf /opt/roundos/.update-controller.new /opt/roundos/update-controller
+  sync -f /opt/roundos
+  # Install dependencies before the shell unit that requires them. Atomic
+  # replacement preserves a readable boot unit across interruption.
+  for update_unit in roundos-update.service roundos-update-recover.service roundos.service; do
+    unit_temp=$(mktemp /etc/systemd/system/.roundos-unit.XXXXXXXX)
+    install -o root -g root -m 0644 "$ROOT/systemd/$update_unit" "$unit_temp"
+    sync -f "$unit_temp"
+    unit_target="/etc/systemd/system/$update_unit"
+    if [ "$update_unit" = roundos.service ]; then unit_target=$unit; fi
+    mv -Tf "$unit_temp" "$unit_target"
+    sync -f /etc/systemd/system
+  done
+  systemctl daemon-reload
+fi
+# The managed Go helper replaces the shell unit atomically after this returns.
 echo "Installed $DEST; service NOT enabled. Review docs and run: sudo roundosctl activate"

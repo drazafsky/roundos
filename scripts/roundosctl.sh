@@ -7,6 +7,62 @@ UNIT=roundos.service
 DM=lightdm.service
 ROOT=/opt/roundos
 STAMP=/var/lib/roundos/desktop-before-roundos
+update_lock_held=0
+check_update_transaction() {
+  record=$1
+  if [ ! -e "$record" ] && [ ! -L "$record" ]; then return; fi
+  if [ -L "$record" ] || [ ! -f "$record" ]; then
+    echo 'Untrusted update recovery record; recover over SSH first' >&2; exit 1
+  fi
+  python3 - "$record" <<'PY'
+import json, os, re, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError()
+        data = source.read(256 * 1024 + 1)
+    if len(data) > 256 * 1024:
+        raise ValueError()
+    value = json.loads(data)
+    status = value.get('status') if isinstance(value, dict) else None
+    if not isinstance(status, dict) or not re.fullmatch(r'[0-9a-f]{32}', status.get('id', '')):
+        raise ValueError()
+    version = status.get('version', '')
+    if len(version) > 128 or not re.fullmatch(
+            r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?', version):
+        raise ValueError()
+    if any(int(part) > 2**64 - 1 for part in version.split('+', 1)[0].split('.')):
+        raise ValueError()
+    phase = status.get('phase')
+    if phase not in ('queued', 'preparing', 'switching', 'starting', 'committing',
+                     'recovering', 'recovery_required', 'succeeded', 'rolled_back', 'failed'):
+        raise ValueError()
+except (OSError, ValueError, TypeError):
+    sys.exit('Invalid update recovery record; recover over SSH first')
+if phase not in ('succeeded', 'rolled_back', 'failed'):
+    sys.exit('Pending update transaction requires recovery over SSH first')
+PY
+}
+lock_update() {
+  if [ "$update_lock_held" -eq 1 ]; then return; fi
+  state=${STAMP%/*}
+  for dir in "$state" "$state/shell-data"; do
+    if [ -L "$dir" ] || { [ -e "$dir" ] && [ ! -d "$dir" ]; }; then
+      echo 'Refusing untrusted update state directory' >&2; exit 1
+    fi
+  done
+  mkdir -p -m 0700 "$state/shell-data"
+  lock="$state/shell-data/update-install.lock"
+  if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+    echo 'Refusing untrusted update lock' >&2; exit 1
+  fi
+  if [ ! -e "$lock" ]; then (set -C; : > "$lock") || exit 1; fi
+  exec 9< "$lock"
+  if ! flock -n 9; then echo 'Another update installer is running' >&2; exit 1; fi
+  update_lock_held=1
+}
 usage() { echo 'Usage: roundosctl {status|verify|activate|disable|rollback|logs}' >&2; exit 2; }
 status() {
   printf 'Release: '; readlink -f "$ROOT/current" 2>/dev/null || echo unavailable
@@ -114,7 +170,7 @@ recover_desktop() {
   rm -f "$STAMP"
 }
 activate() {
-  need_root;need_ssh;verify
+  need_root;need_ssh;lock_update;check_update_transaction "${STAMP%/*}/shell-data/update-install.json";verify
   check_startup_protocol "$(readlink -f "$ROOT/current")"
   # An active notify service has completed initialization, including on retry.
   if systemctl is-active --quiet "$UNIT";then echo 'RoundOS is already ready';return;fi
@@ -138,12 +194,12 @@ activate() {
   echo 'RoundOS ready and enabled for future boots.'
 }
 disable() {
-  need_root;need_ssh
+  need_root;need_ssh;lock_update
   recover_desktop
   echo 'RoundOS disabled; prior recorded desktop state restored.'
 }
 rollback() {
-  need_root; need_ssh
+  need_root; need_ssh; lock_update; check_update_transaction "${STAMP%/*}/shell-data/update-install.json"
   old=$(readlink -f "$ROOT/previous" 2>/dev/null || true)
   case "$old" in
     "$ROOT"/releases/*) [ -d "$old" ] || { echo 'Rollback release directory missing' >&2;exit 1;};;

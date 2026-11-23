@@ -1,6 +1,8 @@
 """Exercise installer identity checks before any installation can occur."""
 import os
+import fcntl
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -19,10 +21,13 @@ class InstallerIdentityTests(unittest.TestCase):
         (self.root / 'scripts').mkdir()
         script = (ROOT / 'scripts/install-release.sh').read_text()
         script = script.replace('/etc/systemd/system/roundos.service', str(self.root / 'installed.service'))
+        script = script.replace('/etc/systemd/system', str(self.root / 'installed-units'))
         script = script.replace('/opt/roundos', str(self.root / 'managed'))
+        script = script.replace('/var/lib/roundos', str(self.root / 'state'))
         (self.root / 'scripts/install-release.sh').write_text(script)
         (self.root / 'systemd').mkdir()
-        shutil.copyfile(ROOT / 'systemd/roundos.service', self.root / 'systemd/roundos.service')
+        for name in ('roundos.service', 'roundos-update.service', 'roundos-update-recover.service'):
+            shutil.copyfile(ROOT / 'systemd' / name, self.root / 'systemd' / name)
         self.mockbin = self.root / 'mockbin'
         self.mockbin.mkdir()
         self.systemctl_calls = self.root / 'systemctl.calls'
@@ -31,7 +36,7 @@ class InstallerIdentityTests(unittest.TestCase):
         self.command('systemctl', 'echo active; exit 0')
         for name in ('roundd', 'round-clock', 'round-timer'):
             path = self.root / name
-            path.write_text('#!/bin/sh\necho "RoundOS ' + VERSION + ' (source)"\n')
+            path.write_text('#!/bin/sh\ncase "$1" in -update-protocol) echo roundos-update-v1;; *) echo "RoundOS ' + VERSION + ' (source)";; esac\n')
             path.chmod(0o755)
         self.metadata = self.root / 'RELEASE_VERSION'
         self.metadata.write_text(VERSION + '\n')
@@ -43,9 +48,9 @@ class InstallerIdentityTests(unittest.TestCase):
         path.write_text('#!/bin/sh\n' + body + '\n')
         path.chmod(0o755)
 
-    def run_installer(self):
+    def run_installer(self, **extra_env):
         env = dict(os.environ, PATH=str(self.mockbin) + os.pathsep + os.environ['PATH'],
-                   SYSTEMCTL_CALL_LOG=str(self.systemctl_calls))
+                   SYSTEMCTL_CALL_LOG=str(self.systemctl_calls), **extra_env)
         return subprocess.run(['sh', str(self.root / 'scripts/install-release.sh')],
                               env=env, capture_output=True, text=True, check=False)
 
@@ -84,6 +89,7 @@ class InstallerIdentityTests(unittest.TestCase):
         legacy = (ROOT / 'systemd/roundos.service').read_text().replace(
             'Type=notify\nNotifyAccess=main\nTimeoutStartSec=45s', 'Type=simple')
         legacy = legacy.replace('StartLimitIntervalSec=360', 'StartLimitIntervalSec=120')
+        legacy = legacy.replace('Requires=roundos-update-recover.service\n', '').replace(' roundos-update-recover.service', '')
         (self.root / 'installed.service').write_text(legacy)
         result = self.run_installer()
         self.assertIn('Refusing to change installed release while', result.stderr)
@@ -179,6 +185,112 @@ class InstallerIdentityTests(unittest.TestCase):
                 result = self.run_installer()
                 self.assertEqual(result.returncode, 97)
                 self.assertIn('REACHED_SETUP', result.stderr)
+
+    def complete_install_fixture(self):
+        script = self.root / 'scripts/install-release.sh'
+        text = script.read_text()
+        for real, local in (('/etc/roundos', 'etc-roundos'), ('/var/lib/roundos', 'state'),
+                            ('/usr/local/sbin', 'localbin'), ('/root/.local/state/roundos', 'old-state')):
+            text = text.replace(real, str(self.root / local))
+        script.write_text(text)
+        (self.root / 'installed-units').mkdir()
+        (self.root / 'localbin').mkdir()
+        (self.root / 'config').mkdir()
+        (self.root / 'config/gestures.example.json').write_text('{}')
+        (self.root / 'README.md').write_text('fixture')
+        setup = self.root / 'scripts/setup-app-user.sh'
+        setup.write_text('#!/bin/sh\nexit 0\n')
+        setup.chmod(0o755)
+        (self.root / 'scripts/roundosctl.sh').write_text('#!/bin/sh\n')
+        self.command('systemctl', 'if [ "$1" = is-active ]; then echo inactive; exit 3; fi')
+        # Run the real installer in private temporary paths without root chown.
+        wrapper = self.root / 'install-wrapper.py'
+        wrapper.write_text('import os,sys\nargs=iter(sys.argv[1:]); kept=[]\n'
+                           'for arg in args:\n'
+                           ' if arg in ("-o","-g"): next(args)\n'
+                           ' else: kept.append(arg)\n'
+                           'os.execv("/usr/bin/install", ["install"]+kept)\n')
+        self.command('install', 'exec python3 "' + str(wrapper) + '" "$@"')
+        self.sync_log = self.root / 'sync.calls'
+        self.command('sync', 'printf "%s\\n" "$*" >> "' + str(self.sync_log) + '"')
+
+    def test_complete_manual_install_sets_controller_and_all_units(self):
+        self.complete_install_fixture()
+        result = self.run_installer()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        dest = self.root / 'managed/releases' / VERSION
+        self.assertEqual((self.root / 'managed/update-controller').resolve(), dest)
+        self.assertEqual((self.root / 'installed.service').read_bytes(),
+                         (self.root / 'systemd/roundos.service').read_bytes())
+        for name in ('roundos-update.service', 'roundos-update-recover.service'):
+            self.assertEqual((self.root / 'installed-units' / name).read_bytes(),
+                             (self.root / 'systemd' / name).read_bytes())
+        self.assertIn('-f ' + str(dest), self.sync_log.read_text().splitlines())
+        self.assertEqual(self.systemctl_calls.read_text().splitlines(),
+                         ['is-active roundos.service', 'daemon-reload'])
+        control = self.root / 'localbin/roundosctl'
+        self.assertEqual(control.read_bytes(), (self.root / 'scripts/roundosctl.sh').read_bytes())
+        self.assertEqual(control.stat().st_mode & 0o777, 0o755)
+        self.assertIn('-f ' + str(control.parent), self.sync_log.read_text().splitlines())
+        self.assertEqual(list(control.parent.glob('.roundosctl.*')), [])
+
+    def test_failed_control_copy_preserves_existing_ssh_recovery_command(self):
+        self.complete_install_fixture()
+        control = self.root / 'localbin/roundosctl'
+        control.write_text('#!/bin/sh\necho existing recovery command\n')
+        original = control.read_bytes()
+        wrapper = self.root / 'install-wrapper.py'
+        self.command('install', 'case "$*" in *scripts/roundosctl.sh*)\n'
+                     ' for target do :; done\n'
+                     ' printf partial > "$target"\n exit 97;;\nesac\n'
+                     'exec python3 "' + str(wrapper) + '" "$@"')
+        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1')
+        self.assertEqual(result.returncode, 97, result.stderr)
+        self.assertEqual(control.read_bytes(), original)
+        self.assertEqual(list(control.parent.glob('.roundosctl.*')), [])
+
+    def test_managed_transaction_defers_unit_and_controller_commit(self):
+        self.complete_install_fixture()
+        installed = self.root / 'installed.service'
+        original = (self.root / 'systemd/roundos.service').read_bytes()
+        installed.write_bytes(original)
+        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1',
+                                    ROUNDOS_UPDATE_STAGE=str(self.root / 'managed/releases' / ('.install-update-' + 'a' * 32)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(installed.read_bytes(), original)
+        self.assertFalse((self.root / 'managed/update-controller').exists())
+        self.assertFalse((self.root / 'installed-units/roundos-update.service').exists())
+        self.assertEqual(self.systemctl_calls.read_text().splitlines(), ['is-active roundos.service'])
+
+    def test_manual_install_obeys_the_managed_transaction_lock(self):
+        self.complete_install_fixture()
+        state = self.root / 'state/shell-data'
+        state.mkdir(parents=True)
+        with (state / 'update-install.lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = self.run_installer()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Another update installer is running', result.stderr)
+        self.assertFalse((self.root / 'managed/releases' / VERSION).exists())
+
+    def test_previous_v1_controller_environment_still_installs(self):
+        self.complete_install_fixture()
+        result = self.run_installer(ROUNDOS_UPDATE_TRANSACTION='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / 'managed/current').resolve(), self.root / 'managed/releases' / VERSION)
+        self.assertFalse((self.root / 'managed/update-controller').exists())
+
+    def test_manual_install_rejects_unfinished_recovery_without_a_live_lock(self):
+        self.complete_install_fixture()
+        state = self.root / 'state/shell-data'
+        state.mkdir(parents=True)
+        record = state / 'update-install.json'
+        record.write_text(json.dumps({'status': {'id': 'a' * 32, 'version': '0.6.0', 'phase': 'switching'}}))
+        record.chmod(0o600)
+        result = self.run_installer()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Pending update transaction requires recovery', result.stderr)
+        self.assertFalse((self.root / 'managed/releases' / VERSION).exists())
 
 
 if __name__ == '__main__':

@@ -27,7 +27,9 @@ func (m *Model) UpdateNotices(items []notify.Item, result notify.Result, now tim
 			}
 		}
 	}
-	if result.Presentation == notify.Banner {
+	// Keep the selected release and its notes readable. These notifications
+	// remain in history, while critical alerts still receive modal treatment.
+	if result.Presentation == notify.Banner && !m.updatePromptInNavigation() {
 		item := result.Item
 		m.Banner = &item
 		m.BannerUntil = now.Add(4 * time.Second)
@@ -68,6 +70,12 @@ func (m *Model) OpenSwitcher() bool {
 	return true
 }
 func (m *Model) Back() bool {
+	if m.Page == ReleaseNotes {
+		return m.Select(UpdatePrompt)
+	}
+	if m.Page == UpdatePrompt {
+		return m.DismissUpdate()
+	}
 	if m.Page == UpdatesPage {
 		return m.Select(Settings)
 	}

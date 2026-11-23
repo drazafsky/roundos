@@ -108,6 +108,7 @@ func (m *Model) SetAppearance(s appearance.Settings) bool {
 		return false
 	}
 	m.Appearance = s
+	m.ReflowReleaseNotes()
 	m.AppearanceDirty = true
 	return true
 }

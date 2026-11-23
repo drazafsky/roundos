@@ -57,3 +57,7 @@ comment resolution, and squash merging with branch deletion.
 Every PR runs automated tests and builds. Successful merges to `main` publish
 installable ARMv7 development prereleases. See [CI and releases](docs/CI-RELEASES.md)
 for checks, downloads, installation, and the separate physical Pi acceptance gate.
+
+See [release updates](docs/UPDATES.md) for Settings controls, installation, and
+SSH recovery, and the [update acceptance record](docs/UPDATE-ACCEPTANCE.md) for
+the remaining physical-device checks.

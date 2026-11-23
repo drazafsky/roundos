@@ -1,0 +1,25 @@
+[Unit]
+Description=RoundOS verified release installation
+After=local-fs.target network.target
+StartLimitIntervalSec=180
+StartLimitBurst=3
+ConditionPathExists=/var/lib/roundos/shell-data/update-request.json
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/roundos/update-controller/bin/roundd -install-update
+TimeoutStartSec=13min
+TimeoutStopSec=4min
+Restart=on-failure
+RestartSec=3s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=full
+ReadWritePaths=/opt/roundos /etc/roundos /etc/systemd/system /usr/local/sbin /var/lib/roundos
+ProtectHome=yes
+PrivateTmp=yes
+StandardInput=null
+StandardOutput=journal
+StandardError=journal

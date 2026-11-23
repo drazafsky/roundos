@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect three M7 runs, explicitly restarting the managed shell for each.
 
---restart-for-latency authorizes each prompted systemctl restart. Other steps
+--restart-for-latency authorizes each prompted start-limit reset and restart. Other steps
 are read-only. A fresh process prevents the original 0.5.0 rolling latency
 window from retaining inputs from another run or workload.
 """
@@ -35,7 +35,7 @@ def main():
     parser.add_argument('--expect-version', required=True)
     parser.add_argument('--scenario', choices=SCENARIOS, required=True)
     parser.add_argument('--output', type=Path, required=True, help='new private directory')
-    parser.add_argument('--restart-for-latency', action='store_true', help='authorize one prompted service restart per run')
+    parser.add_argument('--restart-for-latency', action='store_true', help='authorize one prompted start-limit reset and service restart per run')
     args = parser.parse_args()
     if not args.restart_for_latency:
         parser.error('--restart-for-latency is required: legacy latency samples cannot otherwise be scoped to each run')
@@ -46,8 +46,15 @@ def main():
         expected = identity(args.expect_version)
         for number in (1, 2, 3):
             print(f'Run {number}/3: {args.scenario}. Prepare the workload/settings first.')
-            input('Press Enter to restart roundos.service, then perform this workload until sampling finishes: ')
+            input('Press Enter to reset the start counter and restart roundos.service, then perform this workload: ')
+            current = identity(args.expect_version)
+            if any(current[key] != expected[key] for key in RELEASE_KEYS):
+                raise ValueError('Managed release changed while preparing the run')
             armed = time.clock_gettime(time.CLOCK_BOOTTIME)
+            # Deliberate benchmark restarts would otherwise exhaust the unit's
+            # five-start limit across consecutive scenarios. Never reset an
+            # unhealthy service: identity() above requires an active shell.
+            subprocess.run(['sudo', '/usr/bin/systemctl', 'reset-failed', 'roundos.service'], check=True)
             subprocess.run(['sudo', '/usr/bin/systemctl', 'restart', 'roundos.service'], check=True)
             before = identity(args.expect_version)
             if any(before[key] != expected[key] for key in RELEASE_KEYS):

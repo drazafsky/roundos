@@ -63,7 +63,10 @@ python3 scripts/m7/collect.py --expect-version 0.5.0 --restart-for-latency --sce
 ```
 
 Each command prompts for three independent 60-second runs and explicitly
-restarts roundos.service after you prepare each workload. The original renderer
+checks that roundos.service is healthy, clears its start-rate counter and
+restarts it after you prepare each workload. These deliberate restarts would
+otherwise exhaust the five-start limit across scenarios; the installed unit
+and its failure policy remain unchanged. The original renderer
 keeps a rolling 256-input window, so a fresh process is required to exclude
 prior runs. All navigation and controls after restart belong to that workload.
 The journal reader accepts only that PID and boot, with a summary inside its

@@ -133,6 +133,46 @@ class GateTests(unittest.TestCase):
             with self.assertRaises(ValueError): collect.main()
             run.assert_not_called()
 
+    def test_collector_output_preserves_three_independent_run_identities(self):
+        import collect
+        from unittest import mock
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        identities = [identity(True)]
+        for index in range(3):
+            before, after = identity(True), identity(True)
+            for value in (before, after):
+                value['service_pid'] = 123 + index
+                value['service_start_boottime_seconds'] = 100 + index * 100
+            before['recorded_utc'] = (base + timedelta(seconds=index * 100)).isoformat()
+            after['recorded_utc'] = (base + timedelta(seconds=index * 100 + 70)).isoformat()
+            identities.extend((before, before, after))
+        run_number = 0
+        def execute(args, **kwargs):
+            nonlocal run_number
+            if args[0] == 'sudo': return None
+            directory = Path(args[args.index('--output') + 1])
+            directory.mkdir()
+            start = base + timedelta(seconds=run_number * 100 + 1)
+            raw = [{'utc': (start + timedelta(seconds=i)).isoformat(), 'elapsed_seconds': i,
+                    'processes': [{'name': 'roundd', 'pid': 123 + run_number, 'cpu_percent': 2, 'rss_kib': 12345}]} for i in range(1, 61)]
+            (directory / 'run-01.jsonl').write_text('\n'.join(json.dumps(value) for value in raw))
+            session = {'start_utc': start.isoformat(), 'end_utc': (start + timedelta(seconds=60.5)).isoformat(),
+                       'runs': [{'run': 1, 'start_utc': start.isoformat(), 'end_utc': (start + timedelta(seconds=60.5)).isoformat(), 'complete': True}]}
+            (directory / 'session.json').write_text(json.dumps(session))
+            run_number += 1
+        def metrics(device, start, end):
+            return [{'input-to-present-p95': '10ms', 'input_samples': 7, 'run_scoped': True,
+                     'service_pid': device['service_pid'], 'boot_id': device['boot_id'], 'recorded_utc': end}]
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / 'new-session'
+            args = ['collect.py', '--expect-version', '0.5.0', '--scenario', 'gallery_flick', '--output', str(output), '--restart-for-latency']
+            with mock.patch.object(sys, 'argv', args), mock.patch.object(collect, 'identity', side_effect=identities), mock.patch.object(collect.time, 'clock_gettime', side_effect=[99, 199, 299]), mock.patch('builtins.input', return_value=''), mock.patch('builtins.print'), mock.patch.object(collect.subprocess, 'run', side_effect=execute) as commands, mock.patch.object(collect.latency, 'collect', side_effect=metrics):
+                self.assertEqual(collect.main(), 0)
+            result = json.loads((output / 'session-bound.json').read_text())
+            self.assertIsNotNone(gate.session_runs(result, 'gallery_flick', identities[1]))
+            self.assertEqual([value['m7_identity']['service_pid'] for value in result['runs']], [123, 124, 125])
+            self.assertEqual(sum(call.args[0][0] == 'sudo' for call in commands.call_args_list), 6)
+
 
 class BindingTests(unittest.TestCase):
     def setUp(self):

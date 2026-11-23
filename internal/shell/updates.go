@@ -61,7 +61,7 @@ func (m *Model) SetUpdateStatus(status update.Status) bool {
 			m.Updates.Message = "COULD NOT IGNORE RELEASE - TRY AGAIN"
 		}
 	}
-	return oldPage == UpdatesPage || oldPage == UpdatePrompt || oldPage == ReleaseNotes || oldPage != m.Page
+	return oldPage == UpdatesPage || oldPage == UpdatePrompt || oldPage == ReleaseNotes || oldPage == Switcher || oldPage != m.Page
 }
 
 func (m *Model) TakeUpdateRequest() *update.Command {

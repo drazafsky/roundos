@@ -148,6 +148,22 @@ func TestIgnoreAcknowledgementBeneathOverlay(t *testing.T) {
 	}
 }
 
+func TestIgnoreAcknowledgementRedrawsSwitcherParent(t *testing.T) {
+	m := New()
+	m.Select(Clock)
+	status := availableStatus(1, "0.6.0", "", false, "")
+	m.SetUpdateStatus(status)
+	m.MaybePromptUpdate()
+	m.Updates.PromptFocus = 3
+	m.UpdatePromptActivate()
+	request := m.TakeUpdateRequest()
+	m.OpenSwitcher()
+	status.LastCommandID, status.IgnoredVersion = request.ID, request.Version
+	if !m.SetUpdateStatus(status) || m.Page != Switcher || m.ShellParents[len(m.ShellParents)-1] != Clock {
+		t.Fatal("restored Switcher parent did not request a redraw")
+	}
+}
+
 func TestDefinitiveNoUpdateClearsDeferredNotice(t *testing.T) {
 	for _, result := range []update.CheckStatus{update.UpToDate, update.NoStableRelease} {
 		m := New()
@@ -256,6 +272,31 @@ func TestUpdatePromptWaitsForWiFiConfirmation(t *testing.T) {
 	m.Back()
 	if !m.MaybePromptUpdate() || m.Updates.ReturnPage != WiFiPage {
 		t.Fatal("deferred notice was lost after confirmation closed")
+	}
+}
+
+func TestUpdatePromptWaitsForBannerAndKeepsNotesReadable(t *testing.T) {
+	m := New()
+	now := time.Now()
+	item := notify.Item{ID: 1, Request: notify.Request{Title: "Timer finished"}}
+	m.UpdateNotices([]notify.Item{item}, notify.Result{Presentation: notify.Banner, Item: item}, now)
+	m.SetUpdateStatus(availableStatus(1, "0.6.0", "Release notes", false, ""))
+	if m.MaybePromptUpdate() {
+		t.Fatal("prompt opened under a visible banner")
+	}
+	if !m.BannerExpired(now.Add(4*time.Second)) || !m.MaybePromptUpdate() {
+		t.Fatal("queued prompt did not open after banner expiry")
+	}
+	for _, page := range []int{UpdatePrompt, ReleaseNotes} {
+		m.Select(page)
+		m.UpdateNotices([]notify.Item{item}, notify.Result{Presentation: notify.Banner, Item: item}, now)
+		if m.Banner != nil || len(m.Notices) != 1 {
+			t.Fatal("notification obscured the selected release or disappeared from history")
+		}
+	}
+	m.UpdateNotices([]notify.Item{item}, notify.Result{Presentation: notify.Modal, Item: item}, now)
+	if !m.HasCritical() {
+		t.Fatal("release notes suppressed a critical alert")
 	}
 }
 

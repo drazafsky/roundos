@@ -59,7 +59,7 @@ func (m *Model) observeUpdateResult(status update.Status) {
 func (m *Model) MaybePromptUpdate() bool {
 	if m.Updates.PendingRelease == nil || m.Page == TextEditor || m.Page == DiscardPrompt || m.Page == WiFiConfirm ||
 		m.Page == Accessibility || m.Page == Switcher || m.Page == NotificationCenter || m.Page == NotificationDetail ||
-		m.updatePromptInNavigation() || m.PickerID != "" || m.hasVisibleDialog() || m.HasCritical() || m.EditingWidget != "" {
+		m.updatePromptInNavigation() || m.PickerID != "" || m.hasVisibleDialog() || m.HasCritical() || m.Banner != nil || m.EditingWidget != "" {
 		return false
 	}
 	if !m.Updates.PendingManual && m.Updates.Status.IgnoredVersion == m.Updates.PendingRelease.Version {

@@ -84,14 +84,21 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	// toggle action and dialog ID stable so queued input cannot acquire a new
 	// source, or dismiss an old dialog while leaving its replacement hidden.
 	for action, source := range candidate.boolActions {
-		if previous, ok := r.boolActions[action]; ok && previous != source {
+		if previous, ok := r.boolContracts[action]; ok && previous != source {
 			return fmt.Errorf("replacement remaps boolean action %q", action)
 		}
 	}
+	dialogCount := len(r.dialogContracts)
 	for id, actions := range candidate.dialogActions {
-		if previous, ok := r.dialogActions[id]; ok && previous != actions {
+		if previous, ok := r.dialogContracts[id]; ok && previous != actions {
 			return fmt.Errorf("replacement remaps dialog actions %q", id)
 		}
+		if _, known := r.dialogContracts[id]; !known {
+			dialogCount++
+		}
+	}
+	if dialogCount > maxDialogContracts {
+		return fmt.Errorf("dialog identity history exhausted; restart development session")
 	}
 	if _, ok := candidate.dialogActions[dialog]; !ok {
 		dialog = ""
@@ -121,6 +128,12 @@ func (r *Runtime) ReplaceContext(ctx context.Context, data []byte) (err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.file = candidate.file
+	for action, source := range candidate.boolActions {
+		r.boolContracts[action] = source
+	}
+	for id, actions := range candidate.dialogActions {
+		r.dialogContracts[id] = actions
+	}
 	r.intActions, r.boolActions, r.dialogActions = candidate.intActions, candidate.boolActions, candidate.dialogActions
 	r.dialogID = dialog
 	r.dialogNeedsClear = false

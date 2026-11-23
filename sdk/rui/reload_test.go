@@ -109,8 +109,50 @@ func TestReplacementRejectsRemappingRegisteredToggleSource(t *testing.T) {
 	if err := r.Replace(changed); err == nil || !strings.Contains(err.Error(), "remaps boolean") {
 		t.Fatal("registered source remap accepted", err)
 	}
+	// Remove the entire toggle while retaining the rest of the layout.
+	source, _ := os.ReadFile("../../examples/rui-demo/layout.rui.yaml")
+	start := bytes.Index(source, []byte("          - id: demo.enabled"))
+	if start < 0 {
+		t.Fatal("missing toggle fixture")
+	}
+	end := bytes.Index(source[start:], []byte("          - id: demo.count")) + start
+	if start < 0 || end <= start {
+		t.Fatal("missing toggle fixture")
+	}
+	removed, _, err := compile.Compile(append(addGuard(append([]byte(nil), source[:start]...)), source[end:]...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Replace(removed); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Replace(changed); err == nil || !strings.Contains(err.Error(), "remaps boolean") {
+		t.Fatal("removed toggle lost session contract", err)
+	}
+	if err := r.Replace(data); err != nil {
+		t.Fatal("original toggle did not restore", err)
+	}
 	if _, err := r.Dispatch(app.Event{Type: "input", Action: "demo.setEnabled"}); err != nil || enabled || !other {
 		t.Fatal("queued legacy toggle lost its original meaning", err)
+	}
+}
+
+func TestReplacementRetainsRemovedDialogContract(t *testing.T) {
+	original, _, r := loadDemo(t)
+	count, enabled, title := 5, true, "Demo"
+	registerDemo(t, r, &count, &enabled, &title)
+	removed := replacement(t, func(source []byte) []byte { return bytes.Split(source, []byte("dialogs:"))[0] })
+	if err := r.Replace(removed); err != nil {
+		t.Fatal(err)
+	}
+	changed := replacement(t, func(source []byte) []byte {
+		return bytes.Replace(source, []byte("onConfirm: demo.confirmReset"), []byte("onConfirm: demo.cancelReset"), 1)
+	})
+	if err := r.Replace(changed); err == nil || !strings.Contains(err.Error(), "remaps dialog") {
+		t.Fatal("removed dialog lost session contract", err)
+	}
+	if err := r.Replace(original); err != nil {
+		t.Fatal("original dialog did not restore", err)
 	}
 }
 

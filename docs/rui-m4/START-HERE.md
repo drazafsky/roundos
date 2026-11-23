@@ -81,6 +81,8 @@ sanitized errors. Existing registrations remain available for future layouts.
 Retained toggle actions must keep their checked binding, and retained dialog
 IDs must keep their confirm/cancel actions: legacy input has no layout revision
 with which to distinguish queued events from a remapped control.
+These contracts survive removal and restoration. Dialog history is bounded to
+1,024 distinct IDs per runtime; restart the development session to reset it.
 Hidden widget properties and inactive dialogs are checked too. Candidate
 publication must succeed before its tree and actions become active; replacement
 also publishes one snapshot while hidden so the next foreground view agrees.

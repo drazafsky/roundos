@@ -39,6 +39,9 @@ type ActionEvent struct {
 	Delta int
 }
 type intRange struct{ min, max int }
+
+const maxDialogContracts = 1024
+
 type boolSource struct {
 	binding string
 	literal bool
@@ -59,6 +62,8 @@ type Runtime struct {
 	intActions             map[string]intRange
 	boolActions            map[string]boolSource
 	dialogActions          map[string][2]string
+	boolContracts          map[string]boolSource
+	dialogContracts        map[string][2]string
 	dialogID               string
 	dialogNeedsClear       bool
 	lastView               *ui.View
@@ -131,6 +136,17 @@ func NewForApp(p Publisher, data []byte, expectedAppID string) (*Runtime, error)
 		if tracker, ok := p.(interface{ TrackEditorResults() }); ok {
 			tracker.TrackEditorResults()
 		}
+	}
+	r.boolContracts = make(map[string]boolSource, len(r.boolActions))
+	for action, source := range r.boolActions {
+		r.boolContracts[action] = source
+	}
+	r.dialogContracts = make(map[string][2]string, len(r.dialogActions))
+	if len(r.dialogActions) > maxDialogContracts {
+		return nil, fmt.Errorf("too many dialog identities")
+	}
+	for id, actions := range r.dialogActions {
+		r.dialogContracts[id] = actions
 	}
 	return r, nil
 }

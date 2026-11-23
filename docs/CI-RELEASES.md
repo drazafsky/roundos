@@ -80,6 +80,51 @@ Prereleases are not marked latest. Stable publication is a separate automated
 workflow after recorded hardware validation, described below. Neither workflow
 installs or activates anything on a device.
 
+## Issue work limits
+
+Before repository changes, run
+`python3 scripts/ci/github_tools.py issue-start ISSUE --apply`. It enforces one
+**In Progress** direct native sub-issue per parent in the selected project
+(`RoundOS` by default; select another with `--project`). Parent relationships
+come from GitHub's native hierarchy, not task lists or links in descriptions.
+Different parents can progress independently. Issues without a parent do not
+share a slot. A parent's own status does not occupy its child slot; nested
+parents each have a separate limit for their direct children.
+
+The guard checks every direct sibling, including siblings in other repositories
+and closed siblings whose project status is still **In Progress**. Items outside
+the selected project do not count. Conflicts report the parent and blocking
+issues before any project item is added or updated. Repeating a start for the
+active issue is allowed if no other sibling is in progress. API failures or
+incomplete results stop the start. Omit `--apply` for a read-only capacity preview;
+capacity is rechecked when applying.
+
+After creating a PR, run
+`python3 scripts/ci/github_tools.py issue-review PR --apply`. Moving the issue to
+**PR Review** releases its slot; the capacity guard never blocks this transition.
+Finish or move the active sibling out of **In Progress** before starting another.
+Do not bypass the guard with direct project edits. GitHub board column limits
+are visual indicators and do not enforce this rule.
+
+Applied starts acquire an atomic GitHub reference in the parent's repository,
+`refs/heads/roundos-issue-start/PARENT_DATABASE_ID`, before reading sibling
+statuses, and delete it after checking and updating. This serializes starts
+across machines and Codex sessions; a competing start fails and can be retried.
+The reference points to the parent's repository default branch commit and is
+only a temporary lock, not an implementation branch. In addition to Projects
+write access, credentials need Contents write access in the parent's repository
+and read access to all siblings. Lock acquisition failures stop before project
+writes. Direct GitHub status or hierarchy edits do not participate in this lock.
+
+If a process is killed or reference deletion fails, the lock remains and further
+starts fail safely. Confirm that no start process for that parent is running,
+inspect the sibling statuses and resolve any conflict, then delete only the
+reported lock with
+`gh api --method DELETE repos/OWNER/REPO/git/refs/heads/roundos-issue-start/PARENT_DATABASE_ID`.
+Use the repository and database ID reported in the error, not the issue number.
+Never remove a live lock. Retry `issue-start` afterward; locks are never stolen
+or expired automatically.
+
 ## Automatic stable releases from parent issues
 
 Use `python3 scripts/ci/release_parent.py plan PARENT --version VERSION --acceptance ISSUE`

@@ -2,6 +2,7 @@
 """Check RoundOS PR readiness and update issue project status."""
 
 import argparse
+from contextlib import contextmanager, ExitStack
 import json
 import re
 import subprocess
@@ -159,6 +160,80 @@ ITEM_QUERY = '''query($owner:String!,$name:String!,$number:Int!) {
 }'''
 
 
+def issue_repository(issue):
+    match = re.fullmatch(r'https://api\.github\.com/repos/([\w.-]+/[\w.-]+)', issue['repository_url'])
+    if not match:
+        raise ToolError('Cannot determine issue repository')
+    return match[1]
+
+
+def project_item(github, number, project_id):
+    data = github.repo_graphql(ITEM_QUERY, number=number)['issue']
+    if data is None:
+        raise ToolError(f'Cannot read issue #{number}')
+    items = data['projectItems']
+    if items['pageInfo']['hasNextPage']:
+        raise ToolError(f'Issue #{number} has too many project items to verify')
+    return next((item for item in items['nodes'] if item['project']['id'] == project_id), None)
+
+
+@contextmanager
+def progress_slot(github, issue, project_id, *, apply):
+    """Serialize starts across clients, then check all direct siblings before writes."""
+    parent = github.api(f'issues/{issue["number"]}/parent', missing_ok=True)
+    if parent is None:
+        if issue.get('parent_issue_url'):
+            raise ToolError(f'Cannot read parent {issue["parent_issue_url"]}; verify parent access and run again')
+        yield
+        return
+    parent_repo = issue_repository(parent)
+    parent_github = github if parent_repo.lower() == github.repo.lower() else GitHub(parent_repo)
+    lock = f'heads/roundos-issue-start/{parent["id"]}'
+    if apply:
+        repo = json.loads(gh('api', f'repos/{parent_repo}'))
+        head = parent_github.api(f'git/ref/heads/{repo["default_branch"]}')
+        try:
+            parent_github.api('git/refs', '--method', 'POST', '-f', f'ref=refs/{lock}',
+                              '-f', f'sha={head["object"]["sha"]}')
+        except ToolError as error:
+            raise ToolError(f'Cannot acquire start lock for {parent_repo}#{parent["number"]}: {error}. '
+                            f'Retry after the other start finishes; see docs/CI-RELEASES.md#issue-work-limits '
+                            f'for permissions and stale lock recovery (refs/{lock}).') from error
+    try:
+        # Hierarchy edits are external to this lock. Refuse a changed parent.
+        current = github.api(f'issues/{issue["number"]}/parent', missing_ok=True)
+        if current is None or current['node_id'] != parent['node_id']:
+            raise ToolError('Issue parent changed during the check; run again')
+        siblings = list(parent_github.pages(f'issues/{parent["number"]}/sub_issues'))
+        total = (current.get('sub_issues_summary') or {}).get('total')
+        sibling_ids = {sibling['node_id'] for sibling in siblings}
+        if total is None or len(sibling_ids) != total or len(siblings) != total:
+            raise ToolError('Cannot verify the complete sibling list; run again with read access to all sub-issues')
+        if not any(sibling['node_id'] == issue['node_id'] for sibling in siblings):
+            raise ToolError('Cannot verify the complete parent relationship; run again')
+        blockers = []
+        for sibling in siblings:
+            if sibling['node_id'] == issue['node_id']:
+                continue
+            repo = issue_repository(sibling)
+            source = github if repo.lower() == github.repo.lower() else GitHub(repo)
+            item = project_item(source, sibling['number'], project_id)
+            if item and (item['fieldValueByName'] or {}).get('name') == 'In Progress':
+                blockers.append(f'{repo}#{sibling["number"]}')
+        if blockers:
+            raise ToolError(f'Parent {parent_repo}#{parent["number"]} already has In Progress items: '
+                            + ', '.join(blockers) + '. Move them out of In Progress before starting another sub-issue.')
+        yield
+    finally:
+        if apply:
+            try:
+                parent_github.api(f'git/refs/{lock}', '--method', 'DELETE')
+            except (ToolError, OSError, subprocess.TimeoutExpired) as error:
+                raise ToolError(f'Could not release {parent_repo} refs/{lock}: {error}. '
+                                'The project update may have succeeded. See '
+                                'docs/CI-RELEASES.md#issue-work-limits for stale lock recovery.') from error
+
+
 def project_status(github, issues, target, *, project_name, apply):
     if not issues:
         raise ToolError('No issues to update')
@@ -181,39 +256,41 @@ def project_status(github, issues, target, *, project_name, apply):
     option = next((item['id'] for item in field['options'] if item['name'] == target), None)
     if not option:
         raise ToolError(f'Project {project_name!r} has no {target!r} status')
-    planned = []
-    for issue in issues:
-        items = github.repo_graphql(ITEM_QUERY, number=issue['number'])['issue']['projectItems']
-        if items['pageInfo']['hasNextPage']:
-            raise ToolError(f'Issue #{issue["number"]} has too many project items to verify')
-        item = next((value for value in items['nodes'] if value['project']['id'] == project['id']), None)
-        planned.append((issue, item))
-    for issue, item in planned:
-        current = (item['fieldValueByName'] or {}).get('name') if item else None
-        number = issue['number']
-        if current == target:
-            print(f'#{number}: already {target}')
-            continue
-        if not apply:
-            print(f'#{number}: {current or "no status"} → {target} (preview)')
-            continue
-        if item:
-            item_id = item['id']
-        else:
-            data = github.graphql('''mutation($project:ID!,$issue:ID!) {
-              addProjectV2ItemById(input:{projectId:$project,contentId:$issue}) { item { id } }
-            }''', project=project['id'], issue=issue['node_id'])
-            item_id = data['addProjectV2ItemById']['item']['id']
-        data = github.graphql('''mutation($project:ID!,$item:ID!,$field:ID!,$option:String!) {
-          updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,
-            value:{singleSelectOptionId:$option}}) { projectV2Item {
-              fieldValueByName(name:"Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-            } }
-        }''', project=project['id'], item=item_id, field=field['id'], option=option)
-        actual = data['updateProjectV2ItemFieldValue']['projectV2Item']['fieldValueByName']['name']
-        if actual != target:
-            raise ToolError(f'Issue #{number}: GitHub did not confirm {target}')
-        print(f'#{number}: set to {target}')
+    with ExitStack() as guards:
+        if target == 'In Progress':
+            for issue in issues:
+                guards.enter_context(progress_slot(github, issue, project['id'], apply=apply))
+        planned = [(issue, project_item(github, issue['number'], project['id'])) for issue in issues]
+        for issue, item in planned:
+            set_project_status(github, issue, item, project['id'], field['id'], option, target, apply=apply)
+
+
+def set_project_status(github, issue, item, project_id, field_id, option, target, *, apply):
+    current = (item['fieldValueByName'] or {}).get('name') if item else None
+    number = issue['number']
+    if current == target:
+        print(f'#{number}: already {target}')
+        return
+    if not apply:
+        print(f'#{number}: {current or "no status"} → {target} (preview)')
+        return
+    if item:
+        item_id = item['id']
+    else:
+        data = github.graphql('''mutation($project:ID!,$issue:ID!) {
+          addProjectV2ItemById(input:{projectId:$project,contentId:$issue}) { item { id } }
+        }''', project=project_id, issue=issue['node_id'])
+        item_id = data['addProjectV2ItemById']['item']['id']
+    data = github.graphql('''mutation($project:ID!,$item:ID!,$field:ID!,$option:String!) {
+      updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,
+        value:{singleSelectOptionId:$option}}) { projectV2Item {
+          fieldValueByName(name:"Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+        } }
+    }''', project=project_id, item=item_id, field=field_id, option=option)
+    actual = data['updateProjectV2ItemFieldValue']['projectV2Item']['fieldValueByName']['name']
+    if actual != target:
+        raise ToolError(f'Issue #{number}: GitHub did not confirm {target}')
+    print(f'#{number}: set to {target}')
 
 
 def main():

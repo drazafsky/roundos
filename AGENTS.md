@@ -57,6 +57,17 @@ configuration, and maintenance.
     pull request, set the GitHub project status of each issue tracked by the PR
     to **PR Review**.
 
+11. **Only one In Progress sub-issue per parent.** In the selected project,
+    at most one direct native GitHub sub-issue of a parent may have status
+    **In Progress**. Run `issue-start` before editing and stop if it reports a
+    sibling already in progress or cannot verify capacity. Finish that work
+    or move it to **PR Review** before starting another sibling. Do not bypass
+    the guard by changing project status directly. Different parents have
+    independent slots; issues without a parent have no shared slot. A parent's
+    own status does not occupy a child slot, and nested parents each have
+    their own direct-child limit. See [issue work limits](docs/CI-RELEASES.md#issue-work-limits)
+    for locking, permissions, and recovery.
+
 Use the repository scripts below for routine GitHub work. Run them from the
 repository root with Python 3 and an authenticated `gh` CLI.
 

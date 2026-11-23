@@ -32,3 +32,8 @@ cmp "$work/demo.rui.bin" examples/rui-demo/layout.rui.bin
 "$work/roundui" preview -o "$work/demo.png" "$work/demo.rui.bin"
 go build -o "$work/round-rui-demo" ./examples/rui-demo
 GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o "$work/round-rui-demo-armv7" ./examples/rui-demo
+
+# The manual M7 fixture is compiled and checked but never installed.
+"$work/roundui" compile -o "$work/m7-probe.rui.bin" scripts/m7/probe/layout.rui.yaml
+cmp "$work/m7-probe.rui.bin" scripts/m7/probe/layout.rui.bin
+GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build -o "$work/round-rui-acceptance-armv7" ./scripts/m7/probe

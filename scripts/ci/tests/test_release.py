@@ -37,12 +37,13 @@ class ReleaseTests(unittest.TestCase):
         return release.verify_assets(self.output, VERSION, SHA)
 
     def test_version_stable_on_rerun_and_unique_per_merge(self):
+        expected = (ROOT / 'VERSION').read_text().strip() + '-dev.42.gaaaaaaa'
         with mock.patch.dict(os.environ, GITHUB_RUN_NUMBER='42', GITHUB_SHA=SHA):
-            self.assertEqual(release.version(), VERSION)
+            self.assertEqual(release.version(), expected)
             with mock.patch.dict(os.environ, GITHUB_RUN_ATTEMPT='2'):
-                self.assertEqual(release.version(), VERSION)
+                self.assertEqual(release.version(), expected)
             with mock.patch.dict(os.environ, GITHUB_RUN_NUMBER='43'):
-                self.assertNotEqual(release.version(), VERSION)
+                self.assertNotEqual(release.version(), expected)
 
     def test_rejects_wrong_commit_or_unsafe_version(self):
         for version, sha in [(VERSION, 'b' * 40), ('../../bad', SHA), (VERSION, 'a' * 7)]:

@@ -1,0 +1,70 @@
+{
+  "candidate_commit": null,
+  "checks": {
+    "baseline_managed_boot": {
+      "observed": null,
+      "evidence": ""
+    },
+    "baseline_display_touch_encoder_wifi": {
+      "observed": null,
+      "evidence": ""
+    },
+    "candidate_display_touch_encoder": {
+      "observed": null,
+      "evidence": ""
+    },
+    "clock_label_pickers_gallery": {
+      "observed": null,
+      "evidence": ""
+    },
+    "timer_background_notification_persistence_crash_recovery": {
+      "observed": null,
+      "evidence": ""
+    },
+    "secure_editor_reload_deferral": {
+      "observed": null,
+      "evidence": ""
+    },
+    "hidden_disabled_focus": {
+      "observed": null,
+      "evidence": ""
+    },
+    "candidate_boot_wifi_reconnect": {
+      "observed": null,
+      "evidence": ""
+    },
+    "restart_preserves_settings_and_timer": {
+      "observed": null,
+      "evidence": ""
+    },
+    "disable_restores_desktop": {
+      "observed": null,
+      "evidence": ""
+    },
+    "rollback_restores_managed_050": {
+      "observed": null,
+      "evidence": ""
+    },
+    "hot_reload_retains_app_state": {
+      "observed": null,
+      "evidence": ""
+    },
+    "no_irreversible_state_migrations": {
+      "observed": null,
+      "evidence": ""
+    },
+    "reduce_motion_and_accessibility": {
+      "observed": null,
+      "evidence": ""
+    },
+    "dialogs_and_picker_commit_cancel": {
+      "observed": null,
+      "evidence": ""
+    },
+    "themed_app_icons": {
+      "observed": null,
+      "evidence": ""
+    }
+  },
+  "reload_measurements": []
+}

@@ -125,6 +125,7 @@ transaction over SSH, then start the restored service explicitly:
 
 ```sh
 sudo systemctl stop roundos-update.service
+sudo systemctl stop roundos.service
 sudo /opt/roundos/update-controller/bin/roundd -recover-update
 sudo systemctl reset-failed roundos-update-recover.service roundos.service
 sudo systemctl restart roundos-update-recover.service
@@ -132,8 +133,10 @@ sudo systemctl start roundos.service
 sudo roundosctl verify
 ```
 
-The recovery command restores links and units without starting/stopping its
-dependent shell. This avoids a boot ordering deadlock; the explicit service
+Stop the shell before manual recovery so restored links and files cannot change
+under live shell or application processes. The recovery command restores links
+and units without starting/stopping its dependent shell. This avoids a boot
+ordering deadlock; the explicit service
 start above is for manual recovery. At boot, systemd starts the restored shell.
 If only the outcome journal is unwritable after safe restoration, boot can
 proceed and the service logs report the persistence failure. Fix storage access and

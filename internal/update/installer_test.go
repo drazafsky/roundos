@@ -5,12 +5,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
 
 type fakeInstallerCommands struct {
+	mainPID            string
 	crashDuringCopy    bool
 	limitOnReplacement bool
 	rateLimited        bool
@@ -39,6 +41,12 @@ func (c *fakeInstallerCommands) Run(ctx context.Context, program string, args ..
 	}
 	switch args[0] {
 	case "show":
+		if strings.Contains(call, "--property=MainPID") {
+			if c.mainPID != "" {
+				return []byte(c.mainPID + "\n"), nil
+			}
+			return []byte(strconv.Itoa(os.Getpid()) + "\n"), nil
+		}
 		if strings.Contains(call, "--property=FragmentPath") {
 			return []byte(filepath.Join(filepath.Dir(c.i.unitFile), args[1]) + "\n"), nil
 		}
@@ -545,6 +553,42 @@ func TestInstallerUnacknowledgedHelperLaunchReleasesQueuedRequest(t *testing.T) 
 		t.Fatal("failed helper launch stranded request")
 	}
 	assertManagedLink(t, i, "current", c.old)
+}
+
+func TestInstallerRejectsRequestsFromOutsideManagedShell(t *testing.T) {
+	for _, pid := range []string{"0", "invalid", strconv.Itoa(os.Getpid() + 1)} {
+		t.Run(pid, func(t *testing.T) {
+			i, c, release := installerFixture(t)
+			c.mainPID = pid
+			if err := i.managedShell(context.Background()); err == nil {
+				t.Fatal("unmanaged process passed the caller identity check")
+			}
+			if _, err := i.Request(context.Background(), release); err == nil {
+				t.Fatal("unmanaged process queued an installation")
+			}
+			if _, err := os.Stat(i.transactionFile()); !os.IsNotExist(err) {
+				t.Fatal("unmanaged request wrote a transaction")
+			}
+			if !c.active || strings.Contains(strings.Join(c.log, "\n"), "start --no-block") {
+				t.Fatal("unmanaged request changed the running managed service")
+			}
+		})
+	}
+}
+
+func TestIndependentHelperCanProcessManagedShellHandoff(t *testing.T) {
+	i, c, release := installerFixture(t)
+	if _, err := i.Request(context.Background(), release); err != nil {
+		t.Fatal(err)
+	}
+	// The helper is a separate process from the shell that queued the request.
+	c.mainPID = strconv.Itoa(os.Getpid() + 1)
+	if err := i.RunPending(context.Background()); err != nil {
+		t.Fatalf("caller identity check rejected the independent helper: %v", err)
+	}
+	if status, err := i.ReadStatus(); err != nil || status.Phase != "succeeded" {
+		t.Fatalf("managed handoff failed: %+v, %v", status, err)
+	}
 }
 
 func TestInstallerAcceptsVerifiedManagedUnitsAfterManualRollback(t *testing.T) {

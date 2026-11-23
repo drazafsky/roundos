@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -168,8 +169,20 @@ func (i *Installer) Supported(ctx context.Context) error {
 	if os.Geteuid() != 0 || runtime.GOOS != "linux" || runtime.GOARCH != "arm" {
 		return errors.New("installation requires the managed 32-bit ARM device service")
 	}
+	if err := i.managedShell(ctx); err != nil {
+		return err
+	}
 	_, err := i.preflight(ctx)
 	return err
+}
+
+func (i *Installer) managedShell(ctx context.Context) error {
+	output, err := i.commands.Run(ctx, "/usr/bin/systemctl", "show", "roundos.service", "--property=MainPID", "--value")
+	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil || parseErr != nil || pid <= 0 || pid != os.Getpid() {
+		return errors.New("installation is available only in the managed RoundOS service")
+	}
+	return nil
 }
 
 func (i *Installer) preflight(ctx context.Context) (string, error) {
@@ -282,6 +295,9 @@ func (i *Installer) Request(ctx context.Context, release Release) (InstallStatus
 	}
 	if status.InProgress() || status.Phase == "recovery_required" {
 		return status, ErrInstallBusy
+	}
+	if err := i.managedShell(ctx); err != nil {
+		return status, err
 	}
 	current, err := i.preflight(ctx)
 	if err != nil {

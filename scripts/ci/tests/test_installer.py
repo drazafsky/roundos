@@ -2,6 +2,7 @@
 import os
 import fcntl
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -258,6 +259,18 @@ class InstallerIdentityTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.root / 'managed/current').resolve(), self.root / 'managed/releases' / VERSION)
         self.assertFalse((self.root / 'managed/update-controller').exists())
+
+    def test_manual_install_rejects_unfinished_recovery_without_a_live_lock(self):
+        self.complete_install_fixture()
+        state = self.root / 'state/shell-data'
+        state.mkdir(parents=True)
+        record = state / 'update-install.json'
+        record.write_text(json.dumps({'status': {'id': 'a' * 32, 'version': '0.6.0', 'phase': 'switching'}}))
+        record.chmod(0o600)
+        result = self.run_installer()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Pending update transaction requires recovery', result.stderr)
+        self.assertFalse((self.root / 'managed/releases' / VERSION).exists())
 
 
 if __name__ == '__main__':

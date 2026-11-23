@@ -60,6 +60,10 @@
     "dialogs_and_picker_commit_cancel": {
       "observed": null,
       "evidence": ""
+    },
+    "themed_app_icons": {
+      "observed": null,
+      "evidence": ""
     }
   },
   "reload_measurements": []

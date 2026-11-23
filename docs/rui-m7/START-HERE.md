@@ -136,7 +136,9 @@ all gallery buttons, Timer picker/slider commit/cancel/reset dialog, background
 deadlines and notifications, persisted state, and app crash recovery. Exercise
 Back/notifications, horizontal switching and staggered two-finger Home. Repeat
 touch/rotary navigation with dark/light/high-contrast themes, text scales and
-Reduce Motion. Record absent optional hardware explicitly for human review.
+Reduce Motion. For themed_app_icons, confirm Clock’s analog clock, Timer’s
+stopwatch and Settings’ gear in the launcher and switcher after changing themes
+and text scales. Record absent optional hardware explicitly for human review.
 
 For secure editing and reloads, scripts/m7/probe is a separate manual SDK app.
 It records only secure-editor completion, never the submitted value. Build it

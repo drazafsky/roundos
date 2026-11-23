@@ -23,7 +23,7 @@ RELEASE_KEYS = ('version', 'commit', 'binary_sha256', 'timer_binary_sha256', 'de
 IDENTITY_KEYS = (*RELEASE_KEYS, 'boot_id', 'service_pid', 'service_start_boottime_seconds')
 OBSERVATIONS = (
     'baseline_managed_boot', 'baseline_display_touch_encoder_wifi',
-    'candidate_display_touch_encoder', 'clock_label_pickers_gallery',
+    'candidate_display_touch_encoder', 'themed_app_icons', 'clock_label_pickers_gallery',
     'timer_background_notification_persistence_crash_recovery',
     'secure_editor_reload_deferral', 'hidden_disabled_focus',
     'candidate_boot_wifi_reconnect', 'restart_preserves_settings_and_timer',

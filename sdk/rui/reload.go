@@ -170,7 +170,7 @@ func stageReload(ctx context.Context, r *Runtime, bindings map[string]binding, d
 		if err := text(screen.Hero, 80); err != nil {
 			return view, nil, err
 		}
-		if err := text(screen.Subtitle, 240); err != nil {
+		if err := text(screen.Subtitle, wire.MaxSubtitleBytes); err != nil {
 			return view, nil, err
 		}
 		for _, group := range screen.Groups {

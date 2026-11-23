@@ -149,7 +149,7 @@ func buildViewSelected(f *bundle.File, states stateSnapshot, dialogID string, in
 		if err != nil {
 			return v, fmt.Errorf("screen %s title: %w", screen.ID, err)
 		}
-		sub, err := states.optText(screen.Subtitle, 240)
+		sub, err := states.optText(screen.Subtitle, wire.MaxSubtitleBytes)
 		if err != nil {
 			return v, fmt.Errorf("screen %s subtitle: %w", screen.ID, err)
 		}

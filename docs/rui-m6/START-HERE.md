@@ -71,3 +71,8 @@ the existing editing, background deadline, readiness and crash-recovery tests.
 
 Run `sh scripts/m6/verify.sh`. Physical display/touch/encoder, performance,
 installation and rollback acceptance remain M7 gates.
+
+Clock labels retain the editor’s 256-character capacity, including Unicode.
+Screen subtitles and their legacy root hints allow up to 1,024 UTF-8 bytes;
+other text limits remain those of their property. This applies to initial views,
+reactive updates, and development reloads.

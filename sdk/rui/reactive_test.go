@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"roundos/internal/wire"
 	"roundos/sdk/app"
 )
 
@@ -109,5 +110,46 @@ func TestFailedGetterKeepsLastPropertyWhileOtherBindingsUpdate(t *testing.T) {
 	title = "Recovered"
 	if err := r.Flush(); err != nil || pub.last().Screens[0].Subtitle != "Recovered" {
 		t.Fatal("failed binding was not retried", err)
+	}
+}
+
+func TestEditorSizedSubtitleSurvivesPublicationPatchAndReload(t *testing.T) {
+	data, pub, r := loadDemo(t)
+	count, enabled, title := 5, true, strings.Repeat("🌍", 256)
+	registerDemo(t, r, &count, &enabled, &title)
+	r.Dispatch(app.Event{Type: "visibility", Visible: true})
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	initial := pub.last()
+	if initial.Hint != title || initial.Screens[0].Subtitle != title {
+		t.Fatal("initial caption lost")
+	}
+	title = strings.Repeat("é", 256)
+	r.Invalidate("demo.subtitle")
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	updates, ok := wire.DiffProperties(initial, pub.last())
+	if !ok {
+		t.Fatal("caption forced a structural update")
+	}
+	patched, err := wire.ApplyProperties(initial, updates)
+	if err != nil || patched.Hint != title || patched.Screens[0].Subtitle != title {
+		t.Fatal("caption patch rejected", err)
+	}
+	if err := r.Replace(data); err != nil {
+		t.Fatal("reload rejected editor-sized subtitle", err)
+	}
+	title = strings.Repeat("x", wire.MaxSubtitleBytes+1)
+	r.Invalidate("demo.subtitle")
+	if err := r.Flush(); err == nil {
+		t.Fatal("unbounded subtitle accepted")
+	}
+	if pub.last().Screens[0].Subtitle != patched.Screens[0].Subtitle {
+		t.Fatal("invalid caption replaced last good value")
+	}
+	if err := r.Replace(data); err == nil {
+		t.Fatal("reload accepted unbounded subtitle")
 	}
 }

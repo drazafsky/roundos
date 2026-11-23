@@ -7,6 +7,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
+	"roundos/internal/wire"
 	"roundos/sdk/rui/bundle"
 	"roundos/sdk/rui/spec"
 )
@@ -54,8 +55,11 @@ func validateBindingValue(f *bundle.File, key string, value boundValue) error {
 	for _, dep := range f.Dependencies[key] {
 		if value.typ == spec.StringBinding {
 			limit := 80
-			if dep.Property == "subtitle" || dep.Property == "detail" || dep.Property == "body" {
+			if dep.Property == "detail" || dep.Property == "body" {
 				limit = 240
+			}
+			if dep.Property == "subtitle" {
+				limit = wire.MaxSubtitleBytes
 			}
 			if dep.Property == "label" {
 				limit = 160

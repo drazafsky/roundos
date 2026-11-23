@@ -1,5 +1,9 @@
 package wire
 
+// MaxSubtitleBytes accommodates all 256 Unicode runes accepted by the shell
+// editor, including four-byte characters. Legacy root hints mirror subtitles.
+const MaxSubtitleBytes = 1024
+
 // Widget is a shell-rendered, semantically themed control. Applications send
 // values and actions; the shell owns positioning, hit-testing and focus.
 // Widget IDs must remain stable across view updates to preserve focus.

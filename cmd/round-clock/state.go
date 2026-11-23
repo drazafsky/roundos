@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"roundos/internal/textedit"
 	"roundos/sdk/rui"
 )
 
@@ -36,8 +37,8 @@ func (s *clockState) caption() string {
 	return s.now.Format("MON 02 JAN")
 }
 func (s *clockState) setLabel(value string) error {
-	if len(value) > 240 || !utf8.ValidString(value) {
-		return fmt.Errorf("clock label must be valid UTF-8 and at most 240 bytes")
+	if utf8.RuneCountInString(value) > textedit.MaxRunes || !utf8.ValidString(value) {
+		return fmt.Errorf("clock label must be valid UTF-8 and at most %d characters", textedit.MaxRunes)
 	}
 	s.label = value
 	return nil

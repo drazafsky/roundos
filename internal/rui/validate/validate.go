@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"roundos/internal/wire"
 	"roundos/sdk/rui/spec"
 )
 
@@ -167,7 +168,7 @@ func Validate(d *spec.Document) (*spec.Manifest, error) {
 		if err := addText(s.Hero, "hero", 80); err != nil {
 			return nil, err
 		}
-		if err := addText(s.Subtitle, "subtitle", 240); err != nil {
+		if err := addText(s.Subtitle, "subtitle", wire.MaxSubtitleBytes); err != nil {
 			return nil, err
 		}
 		switch s.Layout {

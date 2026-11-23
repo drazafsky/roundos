@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var ErrInstallBusy = errors.New("an update installation is already in progress")
@@ -109,6 +110,25 @@ func (i *Installer) lock() (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+func (i *Installer) awaitInstallLock(ctx context.Context) (*os.File, error) {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		lock, err := i.lock()
+		if !errors.Is(err, ErrInstallBusy) {
+			return lock, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func atomicInstallLink(root, name, target string) error {

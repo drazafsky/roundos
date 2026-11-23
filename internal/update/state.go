@@ -52,10 +52,11 @@ type State struct {
 // an error, but memory must reflect the replacement already visible on disk.
 // The path belongs in the private shell state directory, not app-owned storage.
 type Store struct {
-	mu            sync.Mutex
-	path          string
-	state         State
-	syncDirectory func(string) error
+	mu             sync.Mutex
+	path           string
+	state          State
+	persistenceErr error
+	syncDirectory  func(string) error
 }
 
 // Open always returns a usable store. A non-nil error reports a read, recovery,
@@ -133,6 +134,7 @@ func Open(path string, now time.Time) (*Store, error) {
 	}
 	if repair {
 		_, saveErr := s.writeState(s.state)
+		s.persistenceErr = saveErr
 		err = errors.Join(err, saveErr)
 	}
 	return s, err
@@ -165,6 +167,12 @@ func (s *Store) Snapshot() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+func (s *Store) PersistenceError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistenceErr
 }
 
 func (s *Store) SetPreferences(p Preferences) error {
@@ -214,6 +222,7 @@ func (s *Store) change(change func(*State)) error {
 	next := s.state
 	change(&next)
 	committed, err := s.writeState(next)
+	s.persistenceErr = err
 	if committed {
 		s.state = next
 	}

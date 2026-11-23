@@ -121,7 +121,7 @@ func (m *Model) SettingsRotate(delta int) bool {
 	if m.Page == WiFiPage {
 		return m.WiFiFocusMove(delta)
 	}
-	next := max(0, min(2, m.WiFi.SettingsFocus+delta))
+	next := max(0, min(3, m.WiFi.SettingsFocus+delta))
 	if next == m.WiFi.SettingsFocus {
 		return false
 	}
@@ -137,6 +137,8 @@ func (m *Model) SettingsActivate() bool {
 		case 1:
 			return m.OpenAccessibility()
 		case 2:
+			return m.OpenUpdates()
+		case 3:
 			return m.Select(Home)
 		}
 	case WiFiPage:
@@ -199,9 +201,9 @@ func (m *Model) SettingsTap(x, y int) bool {
 		return m.Back()
 	}
 	if m.Page == Settings {
-		for i := 0; i < 3; i++ {
-			top := 162 + i*77
-			if y >= top && y < top+65 {
+		for i := 0; i < 4; i++ {
+			top := 146 + i*61
+			if y >= top && y < top+53 {
 				m.WiFi.SettingsFocus = i
 				return m.SettingsActivate()
 			}
@@ -244,16 +246,16 @@ func (m *Model) DrawSettings(im *image.RGBA) {
 	case Settings:
 		textTheme(im, 240, 99, 3, "SETTINGS", p.Accent, true, m.Appearance)
 		textTheme(im, 118, 123, 2, "<", p.PrimaryText, true, m.Appearance)
-		labels := []string{"WI-FI NETWORKS", "APPEARANCE", "HOME"}
-		sub := []string{"SCAN AND CONNECT", "THEME AND ACCESS", "BACK TO LAUNCHER"}
+		labels := []string{"WI-FI NETWORKS", "APPEARANCE", "UPDATES", "HOME"}
+		sub := []string{"SCAN AND CONNECT", "THEME AND ACCESS", "CHECK FOR NEW RELEASES", "BACK TO LAUNCHER"}
 		for i, label := range labels {
-			y := 162 + i*77
-			rect(im, 93, y, 387, y+65, p.Surface)
+			y := 146 + i*61
+			rect(im, 93, y, 387, y+53, p.Surface)
 			if m.WiFi.SettingsFocus == i {
-				outlineRect(im, 91, y-2, 389, y+67, p.Focus)
+				outlineRect(im, 91, y-2, 389, y+55, p.Focus)
 			}
-			textTheme(im, 240, y+11, 2, label, p.PrimaryText, true, m.Appearance)
-			textTheme(im, 240, y+38, 1, sub[i], p.SecondaryText, true, m.Appearance)
+			textTheme(im, 240, y+7, 2, label, p.PrimaryText, true, m.Appearance)
+			textTheme(im, 240, y+33, 1, sub[i], p.SecondaryText, true, m.Appearance)
 		}
 	case WiFiPage:
 		textTheme(im, 240, 95, 3, "WI-FI", p.Accent, true, m.Appearance)

@@ -1,5 +1,10 @@
 # Automated checks and development releases
 
+Device staging pins all three assets to the SHA-256 digests returned by GitHub
+during discovery. Older assets without these digests are incompatible. Downloads,
+extraction (including tar metadata), file counts, and probe output are bounded;
+required executables and the complete file manifest are checked before handoff.
+
 Every PR targeting `main` and every push to `main` runs the **CI and prerelease**
 workflow. It checks Go tests, the race detector, DRM-tagged tests, vet, all three
 Python suites, shell syntax, and RUI validation, compilation, previews and bundle

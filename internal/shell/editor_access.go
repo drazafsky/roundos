@@ -166,6 +166,31 @@ func (m *Model) TapSupplement(x, y int) (bool, string) {
 	}
 	return false, ""
 }
+
+type editorKeyRow struct {
+	keys              string
+	x, y, top, bottom int
+}
+
+// Drawing and touch use the same rows. Alphabetic rows retain the original
+// QWERTY geometry; other groups expose the same characters as the rotary wheel.
+func (m *Model) editorKeyRows() [3]editorKeyRow {
+	rows := [3]editorKeyRow{
+		{"QWERTYUIOP", 46, 200, 198, 246},
+		{"ASDFGHJKL", 66, 250, 247, 297},
+		{"ZXCVBNM", 105, 299, 298, 347},
+	}
+	if m.Editor.Group != 0 {
+		keys := m.Editor.Characters()
+		for i := range rows {
+			n := min(10, len(keys))
+			rows[i].keys, keys = keys[:n], keys[n:]
+			rows[i].x = 46 + (10-n)*39/2
+		}
+	}
+	return rows
+}
+
 func (m *Model) editorTap(x, y int) bool {
 	e := &m.Editor
 	if !e.Visible {
@@ -204,28 +229,9 @@ func (m *Model) editorTap(x, y int) bool {
 			return true
 		}
 	}
-	if y >= 198 && y < 246 {
-		if x >= 46 && x < 436 {
-			idx := (x - 46) / 39
-			if idx < 10 {
-				return m.editorLetter("QWERTYUIOP", idx)
-			}
-		}
-	}
-	if y >= 247 && y < 297 {
-		if x >= 66 && x < 417 {
-			idx := (x - 66) / 39
-			if idx < 9 {
-				return m.editorLetter("ASDFGHJKL", idx)
-			}
-		}
-	}
-	if y >= 298 && y < 347 {
-		if x >= 105 && x < 378 {
-			idx := (x - 105) / 39
-			if idx < 7 {
-				return m.editorLetter("ZXCVBNM", idx)
-			}
+	for _, row := range m.editorKeyRows() {
+		if y >= row.top && y < row.bottom && x >= row.x && x < row.x+len(row.keys)*39 {
+			return m.editorKey(row.keys, (x-row.x)/39)
 		}
 	}
 	if y >= 348 && y < 394 {
@@ -246,7 +252,7 @@ func (m *Model) editorTap(x, y int) bool {
 	}
 	return false
 }
-func (m *Model) editorLetter(keys string, idx int) bool {
+func (m *Model) editorKey(keys string, idx int) bool {
 	if idx < 0 || idx >= len(keys) {
 		return false
 	}
@@ -351,11 +357,7 @@ func (m *Model) DrawSupplement(im *image.RGBA) {
 			}
 			text(im, x+46, 171, 2, g, fg, true)
 		}
-		rows := []struct {
-			keys string
-			x, y int
-		}{{"QWERTYUIOP", 46, 200}, {"ASDFGHJKL", 66, 250}, {"ZXCVBNM", 105, 299}}
-		for _, row := range rows {
+		for _, row := range m.editorKeyRows() {
 			for i, k := range row.keys {
 				x := row.x + i*39
 				selectedWheel := m.Editor.WheelLabel() == string(k)

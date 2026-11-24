@@ -123,8 +123,12 @@ func (s *State) SelectGroup(g int) {
 		s.Wheel = 0
 	}
 }
+
+// Characters returns the selected group's characters in wheel order.
+func (s *State) Characters() string { return groups[s.Group] }
+
 func (s *State) WheelItems() []string {
-	r := []rune(groups[s.Group])
+	r := []rune(s.Characters())
 	items := make([]string, 0, len(r)+len(commands))
 	for _, v := range r {
 		items = append(items, string(v))

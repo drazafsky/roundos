@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"roundos/internal/appearance"
 	"roundos/internal/wire"
 )
 
@@ -116,5 +117,43 @@ func TestTouchKeyboardExposesEveryNumberAndSymbol(t *testing.T) {
 	}
 	if m.Editor.Draft != "0123456789.,!?@#-$%&+/=:;()_" {
 		t.Fatalf("unreachable or incorrect touchscreen characters: %q", m.Editor.Draft)
+	}
+}
+
+func TestTouchKeyboardEveryCharacterHasVisibleLabel(t *testing.T) {
+	for _, theme := range []string{appearance.Dark, appearance.Light, appearance.Contrast} {
+		m := New()
+		m.OpenEditor()
+		settings := m.Appearance
+		settings.Theme = theme
+		m.SetAppearance(settings)
+		for _, row := range []struct {
+			tab, x, y int
+			keys      string
+		}{
+			{140, 46, 200, "QWERTYUIOP"},
+			{140, 66, 250, "ASDFGHJKL"},
+			{140, 105, 299, "ZXCVBNM"},
+			{240, 46, 200, "0123456789"},
+			{340, 46, 200, ".,!?@#-$%&"},
+			{340, 85, 250, "+/=:;()_"},
+		} {
+			m.Tap(row.tab, 180)
+			frame := drawEditorKeyboard(m)
+			for i, key := range row.keys {
+				ink := 0
+				// Each centered key label occupies a 10x14 pixel cell.
+				for y := row.y + 11; y < row.y+25; y++ {
+					for x := row.x + i*39 + 13; x < row.x+i*39+23; x++ {
+						if frame.RGBAAt(x, y) == settings.Palette().PrimaryText {
+							ink++
+						}
+					}
+				}
+				if ink == 0 {
+					t.Errorf("%s keyboard key %q has a blank label", theme, key)
+				}
+			}
+		}
 	}
 }

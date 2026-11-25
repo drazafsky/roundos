@@ -40,13 +40,17 @@ func (m *Model) moveCarousel(delta int, now time.Time) bool {
 }
 
 func (m *Model) carouselPosition(now time.Time) float64 {
-	if m.Appearance.ReduceMotion || m.carouselStarted.IsZero() || !now.Before(m.carouselStarted.Add(carouselDuration)) {
+	if !m.carouselAnimating(now) {
 		return float64(m.Selected)
 	}
 	t := max(0, float64(now.Sub(m.carouselStarted))/float64(carouselDuration))
 	// Smoothstep gives a continuous slide with stationary endpoints.
 	t = t * t * (3 - 2*t)
 	return m.carouselFrom + (m.carouselTarget-m.carouselFrom)*t
+}
+
+func (m *Model) carouselAnimating(now time.Time) bool {
+	return !m.Appearance.ReduceMotion && !m.carouselStarted.IsZero() && now.Before(m.carouselStarted.Add(carouselDuration))
 }
 
 // AdvanceCarousel requests the final frame as well as intermediate ones. Drawing

@@ -22,6 +22,7 @@ func TestNavigation(t *testing.T) {
 	if changed, _, _ := m.Rotate(1); !changed || m.Selected != 1 {
 		t.Fatal("carousel rotary focus")
 	}
+	m.AdvanceCarousel(time.Now().Add(carouselDuration))
 	if changed, _ := m.Tap(240, 258); !changed || m.Page != Timer {
 		t.Fatal("focused carousel timer activation")
 	}

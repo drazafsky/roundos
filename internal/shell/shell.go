@@ -370,7 +370,7 @@ func (m *Model) Tap(x, y int) (bool, string) {
 		return m.WidgetTap(x, y)
 	}
 	if m.Page == Home {
-		if y >= 355 && y <= 435 {
+		if x >= 154 && x < 326 && y >= 390 && y < 432 {
 			m.Select(Diagnostics)
 			return true, ""
 		}
@@ -380,6 +380,9 @@ func (m *Model) Tap(x, y int) (bool, string) {
 			} else if x > 357 {
 				return m.moveCarousel(1, time.Now()), ""
 			} else {
+				if m.carouselAnimating(time.Now()) {
+					return false, ""
+				}
 				m.Press()
 			}
 		}

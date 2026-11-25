@@ -23,6 +23,7 @@ func TestCarouselFocusLaunchAndWrap(t *testing.T) {
 	if changed, _, _ := m.Rotate(-1); !changed || m.Selected != 2 {
 		t.Fatalf("wrap left: %d", m.Selected)
 	}
+	m.AdvanceCarousel(time.Now().Add(carouselDuration))
 	if changed, _ := m.Tap(240, 250); !changed || m.Page != Settings {
 		t.Fatalf("center opens Settings: %d", m.Page)
 	}
@@ -32,6 +33,7 @@ func TestCarouselFocusLaunchAndWrap(t *testing.T) {
 	if changed, _ := m.Tap(50, 250); !changed || m.Page != Home || m.Selected != 1 {
 		t.Fatalf("neighbor tap focuses Timer: page=%d selected=%d", m.Page, m.Selected)
 	}
+	m.AdvanceCarousel(time.Now().Add(carouselDuration))
 	if changed, _ := m.Tap(240, 250); !changed || m.Page != Timer {
 		t.Fatal("center opens Timer")
 	}

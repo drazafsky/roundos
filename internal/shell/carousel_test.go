@@ -158,6 +158,38 @@ func TestCarouselNamesUnderEveryInstalledIcon(t *testing.T) {
 	}
 }
 
+func TestCarouselTouchLaunchWaitsForSlideAndLabelsAreInert(t *testing.T) {
+	m := New()
+	m.moveCarousel(1, time.Now())
+	if changed, _ := m.Tap(240, 238); changed || m.Page != Home {
+		t.Fatal("center touch launched an app before its icon arrived")
+	}
+	m.moveCarousel(-1, time.Now())
+	if changed, _ := m.Tap(240, 238); changed || m.Page != Home {
+		t.Fatal("retargeted slide allowed a center touch to launch early")
+	}
+	m.AdvanceCarousel(time.Now().Add(carouselDuration))
+	if changed, _ := m.Tap(240, 238); !changed || m.Page != Clock {
+		t.Fatal("settled icon cannot be launched by touch")
+	}
+	m.Select(Home)
+	for _, point := range []image.Point{{240, 355}, {240, 374}, {100, 403}, {370, 403}} {
+		m.Tap(point.X, point.Y)
+		if m.Page != Home {
+			t.Fatalf("informational label or empty space opened Diagnostics: %v", point)
+		}
+	}
+	if changed, _ := m.Tap(240, 411); !changed || m.Page != Diagnostics {
+		t.Fatal("Diagnostics button is no longer touch accessible")
+	}
+	m.Select(Home)
+	m.Appearance.ReduceMotion = true
+	m.moveCarousel(1, time.Now())
+	if changed, _ := m.Tap(240, 238); !changed || m.Page != Timer {
+		t.Fatal("reduced motion unnecessarily blocked an already settled target")
+	}
+}
+
 func imageBytes(im *image.RGBA, region image.Rectangle) []byte {
 	var out []byte
 	for y := region.Min.Y; y < region.Max.Y; y++ {

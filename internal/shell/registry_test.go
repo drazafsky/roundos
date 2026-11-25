@@ -17,6 +17,7 @@ func TestInstalledAppCarouselAndIPC(t *testing.T) {
 	if changed, _, _ := m.Rotate(3); !changed || m.Selected != 3 {
 		t.Fatal("demo not selectable")
 	}
+	m.AdvanceCarousel(time.Now().Add(carouselDuration))
 	if ch, _ := m.Tap(240, 252); !ch || m.AppID(m.Page) != "org.roundos.demo" {
 		t.Fatal("demo not activated")
 	}

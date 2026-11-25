@@ -34,6 +34,7 @@ func (m *Model) moveCarousel(delta int, now time.Time) bool {
 		m.carouselFrom = position
 		m.carouselTarget = target + float64(step)
 		m.carouselStarted = now
+		m.carouselNextFrame = now.Add(carouselFrame)
 	}
 	return true
 }
@@ -56,7 +57,12 @@ func (m *Model) AdvanceCarousel(now time.Time) bool {
 	}
 	if m.Page != Home || m.Appearance.ReduceMotion || !now.Before(m.carouselStarted.Add(carouselDuration)) {
 		m.carouselStarted = time.Time{}
+		return true
 	}
+	if now.Before(m.carouselNextFrame) {
+		return false
+	}
+	m.carouselNextFrame = now.Add(carouselFrame)
 	return true
 }
 
@@ -64,7 +70,11 @@ func (m *Model) NextCarouselWake(now time.Time) time.Duration {
 	if m.Page != Home || m.Appearance.ReduceMotion || m.carouselStarted.IsZero() {
 		return 0
 	}
-	return max(time.Millisecond, min(carouselFrame, m.carouselStarted.Add(carouselDuration).Sub(now)))
+	deadline := m.carouselNextFrame
+	if end := m.carouselStarted.Add(carouselDuration); end.Before(deadline) {
+		deadline = end
+	}
+	return max(time.Nanosecond, deadline.Sub(now))
 }
 
 // Each installed app has an icon and a name beneath it. Only the focused entry

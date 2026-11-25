@@ -39,6 +39,13 @@ func TestCarouselFramesTakePriorityOverHomeMinuteRefresh(t *testing.T) {
 	m := shell.New()
 	m.Rotate(1)
 	now := time.Now()
+	deadline := now.Add(nextWake(m, now, time.Time{}))
+	for _, elapsed := range []time.Duration{time.Millisecond, 5 * time.Millisecond, 10 * time.Millisecond} {
+		at := now.Add(elapsed)
+		if got := at.Add(nextWake(m, at, time.Time{})); !got.Equal(deadline) {
+			t.Fatalf("background event postponed carousel frame: %v != %v", got, deadline)
+		}
+	}
 	if wake := nextWake(m, now, time.Time{}); wake <= 0 || wake > 20*time.Millisecond {
 		t.Fatalf("Home clock postponed the animation frame: %v", wake)
 	}

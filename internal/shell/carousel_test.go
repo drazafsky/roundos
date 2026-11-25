@@ -50,6 +50,28 @@ func TestCarouselWrapPreferenceAndInputBoundaries(t *testing.T) {
 	}
 }
 
+func TestCarouselWrapReachableWithTouchOnly(t *testing.T) {
+	for _, large := range []bool{false, true} {
+		m := New()
+		m.Appearance.LargeTargets = large
+		m.OpenAccessibility()
+		for i := 0; i < 2; i++ {
+			if changed, _ := m.Tap(320, 402); !changed {
+				t.Fatal("touch Next did not reveal additional appearance rows")
+			}
+		}
+		start, _, top, step, _ := accessGeometry(m)
+		if changed, _ := m.Tap(240, top+(4-start)*step+20); !changed || m.Appearance.CarouselWrap {
+			t.Fatalf("Wrap apps is unreachable using touch, large=%t", large)
+		}
+		m.Tap(160, 402)
+		m.Tap(160, 402)
+		if m.AccessFocus != 0 {
+			t.Fatal("touch Prev cannot return to the first row")
+		}
+	}
+}
+
 func TestCarouselAnimationRetargetWrapAndStop(t *testing.T) {
 	m := New()
 	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)

@@ -147,6 +147,15 @@ func (m *Model) TapSupplement(x, y int) (bool, string) {
 	case TextEditor:
 		return m.editorTap(x, y), ""
 	case Accessibility:
+		if y >= 380 && y < 424 {
+			_, visible, _, _, _ := accessGeometry(m)
+			if x >= 110 && x < 210 {
+				return m.moveAccessFocus(-visible), ""
+			}
+			if x >= 270 && x < 370 {
+				return m.moveAccessFocus(visible), ""
+			}
+		}
 		start, rows, rowY, step, height := accessGeometry(m)
 		for i := start; i < 5 && i < start+rows; i++ {
 			top := rowY + (i-start)*step
@@ -278,13 +287,21 @@ func (m *Model) RotateSupplement(delta int) (bool, string, int) {
 		}
 		return true, "", 0
 	case Accessibility:
-		m.AccessFocus = max(0, min(4, m.AccessFocus+delta))
-		return true, "", 0
+		return m.moveAccessFocus(delta), "", 0
 	case DiscardPrompt:
 		m.DiscardFocus = max(0, min(1, m.DiscardFocus+delta))
 		return true, "", 0
 	}
 	return false, "", 0
+}
+
+func (m *Model) moveAccessFocus(delta int) bool {
+	next := max(0, min(4, m.AccessFocus+delta))
+	if next == m.AccessFocus {
+		return false
+	}
+	m.AccessFocus = next
+	return true
 }
 func (m *Model) ActivateSupplement() (bool, string) {
 	switch m.Page {
@@ -413,6 +430,15 @@ func (m *Model) DrawSupplement(im *image.RGBA) {
 			text(im, 240, y+9, sz, labels[i], fg, true)
 			text(im, 240, y+height-27, 2, values[i], accent, true)
 		}
+		prev, next := fg, fg
+		if m.AccessFocus == 0 {
+			prev = p.Disabled
+		}
+		if m.AccessFocus == len(labels)-1 {
+			next = p.Disabled
+		}
+		button(im, 160, 402, 100, 44, "PREV", p.Surface, prev)
+		button(im, 320, 402, 100, 44, "NEXT", p.Surface, next)
 		text(im, 240, 430, 1, "ROTATE / PRESS TO CHANGE", muted, true)
 	case DiscardPrompt:
 		disc(im, 240, 240, 166, bg)

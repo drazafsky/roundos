@@ -34,6 +34,7 @@ type Model struct {
 	carouselFrom            float64
 	carouselTarget          float64
 	carouselStarted         time.Time
+	carouselNextFrame       time.Time
 	AppPages                map[string]int
 	PageApps                map[int]string
 	WiFi                    WiFiState

@@ -227,7 +227,7 @@ func decodeDocument(root *node) (*spec.Document, error) {
 	if e != nil {
 		return nil, e
 	}
-	if e = only(app, "id"); e != nil {
+	if e = only(app, "id", "icon"); e != nil {
 		return nil, e
 	}
 	idnode, e := required(app, "id")
@@ -235,6 +235,14 @@ func decodeDocument(root *node) (*spec.Document, error) {
 		return nil, e
 	}
 	id, e := stringLiteral(idnode)
+	if e != nil {
+		return nil, e
+	}
+	iconnode, e := required(app, "icon")
+	if e != nil {
+		return nil, e
+	}
+	icon, e := stringLiteral(iconnode)
 	if e != nil {
 		return nil, e
 	}
@@ -246,7 +254,7 @@ func decodeDocument(root *node) (*spec.Document, error) {
 	if e != nil {
 		return nil, e
 	}
-	doc := &spec.Document{Schema: version, Application: spec.Application{ID: id, Pos: app.pos}, Pos: root.pos}
+	doc := &spec.Document{Schema: version, Application: spec.Application{ID: id, Icon: icon, Pos: app.pos}, Pos: root.pos}
 	for _, n := range screenItems {
 		s, e := decodeScreen(n)
 		if e != nil {

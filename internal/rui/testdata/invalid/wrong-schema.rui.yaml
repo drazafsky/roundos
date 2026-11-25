@@ -1,6 +1,7 @@
 schema: roundos.rui/v2
 application:
   id: example
+  icon: RUI
 screens:
   - id: home
     title: Home

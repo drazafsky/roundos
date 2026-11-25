@@ -1,6 +1,7 @@
 schema: roundos.rui/v1
 application:
   id: org.example.rui.acceptance
+  icon: RUI
 screens:
   - id: probe.root
     title: M7 RELOAD PROBE

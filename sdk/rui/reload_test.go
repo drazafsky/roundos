@@ -230,7 +230,7 @@ func TestReplacementChecksFutureSnapshotFrameBudgets(t *testing.T) {
 				t.Fatal(err)
 			}
 			var source strings.Builder
-			source.WriteString("schema: roundos.rui/v1\napplication:\n  id: org.example.rui.demo\nscreens:\n")
+			source.WriteString("schema: roundos.rui/v1\napplication:\n  id: org.example.rui.demo\n  icon: RUI\nscreens:\n")
 			for screen := 0; screen < 8; screen++ {
 				fmt.Fprintf(&source, "  - id: screen%d\n    title: Test\n    layout: list\n    groups:\n      - id: items\n        widgets:\n", screen)
 				for widget := 0; widget < 64; widget++ {

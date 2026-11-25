@@ -12,9 +12,26 @@ func str(v string) spec.Value[string] {
 	return spec.Value[string]{Literal: v, Present: true, Pos: spec.Pos{Line: 1, Column: 1}}
 }
 func minDoc() *spec.Document {
-	return &spec.Document{Schema: spec.Version, Application: spec.Application{ID: "example.app"}, Screens: []spec.Screen{{ID: "app.root", Title: str("App"), Layout: "detail", Groups: []spec.Group{{ID: "content", Widgets: []spec.Widget{{ID: "app.label", Type: "label", Label: ptrStr("Hello")}}}}}}}
+	return &spec.Document{Schema: spec.Version, Application: spec.Application{ID: "example.app", Icon: "RUI"}, Screens: []spec.Screen{{ID: "app.root", Title: str("App"), Layout: "detail", Groups: []spec.Group{{ID: "content", Widgets: []spec.Widget{{ID: "app.label", Type: "label", Label: ptrStr("Hello")}}}}}}}
 }
 func ptrStr(s string) *spec.Value[string] { v := str(s); return &v }
+
+func TestApplicationIconRequiredAndMatchesManifestTokens(t *testing.T) {
+	for _, icon := range []string{"", "clock", "ABCD", "A B", "/x", "é", "{ bind: icon }"} {
+		d := minDoc()
+		d.Application.Icon = icon
+		if _, err := Validate(d); err == nil || !strings.Contains(err.Error(), "application icon") {
+			t.Fatalf("invalid icon %q not diagnosed: %v", icon, err)
+		}
+	}
+	for _, icon := range []string{"A", "12", "CLK", "TMR", "RUI", "A1B"} {
+		d := minDoc()
+		d.Application.Icon = icon
+		if _, err := Validate(d); err != nil {
+			t.Fatalf("valid icon %q rejected: %v", icon, err)
+		}
+	}
+}
 func TestSemanticWidgetBudget(t *testing.T) {
 	d := minDoc()
 	d.Screens[0].Groups[0].Title = ptrStr("Heading") // costs one slot

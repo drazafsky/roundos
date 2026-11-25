@@ -38,7 +38,7 @@ func TestCompileFixtureDeterministically(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if verified.SourceSHA256 != g.SourceSHA256 || f.SourceMap["application"].Line == 0 {
+			if verified.SourceSHA256 != g.SourceSHA256 || f.SourceMap["application"].Line == 0 || verified.Document.Application.Icon == "" || verified.Document.Application.Icon != f.Document.Application.Icon {
 				t.Fatal("missing manifest or sourcemap")
 			}
 			var temp bundle.File
@@ -54,6 +54,26 @@ func TestCompileFixtureDeterministically(t *testing.T) {
 				t.Fatal("nonreproducible Go constants")
 			}
 		})
+	}
+}
+
+func TestIconlessDeclarationsAndCompiledDocumentsRejected(t *testing.T) {
+	src := input(t, "minimal.rui.yaml")
+	missing := bytes.Replace(src, []byte("  icon: RUI\n"), nil, 1)
+	if _, _, err := Compile(missing); err == nil || !strings.Contains(err.Error(), `missing required field "icon"`) {
+		t.Fatalf("iconless YAML declaration accepted: %v", err)
+	}
+	_, f, err := Compile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Document.Application.Icon = ""
+	encoded, err := bundle.Encode(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(encoded); err == nil || !strings.Contains(err.Error(), "missing application icon") {
+		t.Fatalf("checksum-valid iconless document accepted: %v", err)
 	}
 }
 func TestVerifyManifestAndMapTampering(t *testing.T) {

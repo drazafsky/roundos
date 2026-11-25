@@ -1,0 +1,13 @@
+schema: roundos.rui/v1
+application:
+  id: org.roundos.example
+screens:
+  - id: home
+    title: 'Simple: Example'
+    layout: detail
+    groups:
+      - id: info
+        widgets:
+          - id: info.label
+            type: label
+            label: 'Hello # World'

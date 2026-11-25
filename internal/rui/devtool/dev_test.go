@@ -43,7 +43,7 @@ func (s *recordingSender) Send(_ context.Context, data []byte) (bool, error) {
 func (*recordingSender) Close() error { return nil }
 
 func TestWatchDebouncesAndRetainsLastGood(t *testing.T) {
-	source := []byte("schema: roundos.rui/v1\napplication:\n  id: org.example.test\nscreens:\n  - id: root\n    title: First\n    layout: list\n    groups:\n      - id: one\n        widgets:\n          - id: label\n            type: label\n            label: Hello\n")
+	source := []byte("schema: roundos.rui/v1\napplication:\n  id: org.example.test\n  icon: RUI\nscreens:\n  - id: root\n    title: First\n    layout: list\n    groups:\n      - id: one\n        widgets:\n          - id: label\n            type: label\n            label: Hello\n")
 	path := filepath.Join(t.TempDir(), "app.rui.yaml")
 	if err := os.WriteFile(path, source, 0600); err != nil {
 		t.Fatal(err)

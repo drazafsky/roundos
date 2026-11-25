@@ -1,6 +1,7 @@
 schema: roundos.rui/v1
 application:
   id: example
+  icon: RUI
 screens:
   - id: home
     title: { bind: settings.value }

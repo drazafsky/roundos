@@ -1,1 +1,1 @@
-14:22: ambiguous YAML scalar "yes"; use an explicitly quoted string or true/false
+15:22: ambiguous YAML scalar "yes"; use an explicitly quoted string or true/false

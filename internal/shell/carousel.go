@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -81,12 +82,18 @@ func (m *Model) NextCarouselWake(now time.Time) time.Duration {
 	return max(time.Nanosecond, deadline.Sub(now))
 }
 
+func launcherHeader(now time.Time) (clock, date string) {
+	local := now.Local()
+	return local.Format("15:04"), local.Format("Jan. 2, 2006")
+}
+
 // Each installed app has an icon and a name beneath it. Only the focused entry
 // launches; neighboring entries remain focus targets for touch and rotary.
 func drawCarousel(im *image.RGBA, m *Model, now time.Time) {
 	p := m.Appearance.Palette()
-	textTheme(im, 240, 79, 3, "ROUNDOS", p.Accent, true, m.Appearance)
-	textTheme(im, 240, 114, 3, now.Format("15:04"), p.PrimaryText, true, m.Appearance)
+	clock, date := launcherHeader(now)
+	textTheme(im, 240, 79, 3, clock, p.Accent, true, m.Appearance)
+	textTheme(im, 240, 114, 3, strings.ToUpper(date), p.PrimaryText, true, m.Appearance)
 	textTheme(im, 240, 144, 2, "APPLICATIONS", p.SecondaryText, true, m.Appearance)
 
 	n := m.CarouselCount()
@@ -138,5 +145,4 @@ func drawCarousel(im *image.RGBA, m *Model, now time.Time) {
 	}
 	textTheme(im, 240, 355, 1, "SELECT TO OPEN", p.SecondaryText, true, m.Appearance)
 	textTheme(im, 240, 374, 1, fmt.Sprintf("%d / %d", m.Selected+1, n), p.SecondaryText, true, m.Appearance)
-	button(im, 240, 411, 172, 42, "TOUCH TEST", p.Surface, p.PrimaryText)
 }

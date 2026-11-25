@@ -104,6 +104,7 @@ func TestOmittedRangeSamplesUseKnownEndpointAndValue(t *testing.T) {
 		source := fmt.Sprintf(`schema: roundos.rui/v1
 application:
   id: example.range
+  icon: RUI
 screens:
   - id: root
     title: Range
@@ -167,7 +168,7 @@ func TestEffectiveGroupsAndVisibility(t *testing.T) {
 }
 
 func TestRejectOversizedV7Frame(t *testing.T) {
-	f := &bundle.File{Document: spec.Document{Schema: spec.Version, Application: spec.Application{ID: "org.roundos.timer"}}}
+	f := &bundle.File{Document: spec.Document{Schema: spec.Version, Application: spec.Application{ID: "org.roundos.timer", Icon: "RUI"}}}
 	for screen := 0; screen < 16; screen++ {
 		s := spec.Screen{ID: fmt.Sprintf("s%d", screen), Title: spec.Value[string]{Present: true, Literal: "Screen"}, Layout: "list"}
 		g := spec.Group{ID: "group"}

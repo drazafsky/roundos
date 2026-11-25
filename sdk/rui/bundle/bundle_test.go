@@ -11,7 +11,7 @@ import (
 )
 
 func fixture() *File {
-	return &File{Format: Format, Document: spec.Document{Schema: spec.Version, Application: spec.Application{ID: "org.roundos.timer"}, Screens: []spec.Screen{{ID: "root"}}}, Manifest: spec.Manifest{Bindings: map[string]spec.BindingType{}}, SourceSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", SourceMap: map[string]spec.Pos{}}
+	return &File{Format: Format, Document: spec.Document{Schema: spec.Version, Application: spec.Application{ID: "org.roundos.timer", Icon: "RUI"}, Screens: []spec.Screen{{ID: "root"}}}, Manifest: spec.Manifest{Bindings: map[string]spec.BindingType{}}, SourceSHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", SourceMap: map[string]spec.Pos{}}
 }
 func TestRoundtripAndDeterminism(t *testing.T) {
 	f := fixture()

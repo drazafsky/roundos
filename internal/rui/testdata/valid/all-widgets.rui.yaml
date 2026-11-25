@@ -1,6 +1,7 @@
 schema: roundos.rui/v1
 application:
   id: example.rui.gallery
+  icon: RUI
 screens:
   - id: gallery.root
     title: "Widget Gallery"

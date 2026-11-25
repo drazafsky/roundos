@@ -308,7 +308,7 @@ func Render(f *bundle.File, v wire.View, screenID, theme string) (*image.RGBA, e
 	id = f.Document.Application.ID
 	model := shell.New()
 	if id != wire.ClockID && id != wire.TimerID {
-		model.SetInstalledApps([]appmgr.AppSpec{{ID: id, Name: "RUI PREVIEW", Icon: "RUI"}})
+		model.SetInstalledApps([]appmgr.AppSpec{{ID: id, Name: "RUI PREVIEW", Icon: f.Document.Application.Icon}})
 	}
 	if theme == "" {
 		theme = appearance.Dark

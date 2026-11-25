@@ -133,7 +133,7 @@ func TestSourcePositions(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if d.Screens[0].Pos.Line != 5 || d.Screens[0].Groups[0].Widgets[0].Pos.Line != 13 {
+	if d.Screens[0].Pos.Line != 6 || d.Screens[0].Groups[0].Widgets[0].Pos.Line != 14 {
 		t.Fatalf("unexpected source maps: screen %+v widget %+v", d.Screens[0].Pos, d.Screens[0].Groups[0].Widgets[0].Pos)
 	}
 }
@@ -145,7 +145,7 @@ func FuzzParseUntrustedInput(f *testing.F) {
 	f.Fuzz(func(t *testing.T, b []byte) { _, _ = parse.Parse(b) })
 }
 func TestBlockBindingSyntax(t *testing.T) {
-	raw := []byte("schema: roundos.rui/v1\napplication:\n  id: example\nscreens:\n  - id: root\n    title:\n      bind: app.title\n    layout: detail\n    groups:\n      - id: info\n        widgets:\n          - id: info.label\n            type: label\n            label: \"Hello: world\"\n")
+	raw := []byte("schema: roundos.rui/v1\napplication:\n  id: example\n  icon: RUI\nscreens:\n  - id: root\n    title:\n      bind: app.title\n    layout: detail\n    groups:\n      - id: info\n        widgets:\n          - id: info.label\n            type: label\n            label: \"Hello: world\"\n")
 	d, e := parse.Parse(raw)
 	if e != nil {
 		t.Fatal(e)

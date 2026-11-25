@@ -18,8 +18,8 @@ func TestTwoFingerSystemNavigationAndDiagnostic(t *testing.T) {
 	if !m.TwoFingerSwipe("up") || m.Page != Home {
 		t.Fatal("two finger up should open Home")
 	}
-	if changed, _ := m.Tap(240, 393); !changed || m.Page != Diagnostics {
-		t.Fatal("home touch diagnostic button")
+	if !m.Select(Diagnostics) {
+		t.Fatal("explicit diagnostic navigation")
 	}
 	if m.TwoFingerSwipe("left") {
 		t.Fatal("diagnostics should not navigate with gestures")

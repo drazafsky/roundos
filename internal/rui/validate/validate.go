@@ -14,6 +14,7 @@ import (
 )
 
 var idRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
+var iconRE = regexp.MustCompile(`^[A-Z0-9]{1,3}$`)
 
 const MaxScreens = 16
 const MaxEffectiveWidgets = 64
@@ -98,6 +99,12 @@ func Validate(d *spec.Document) (*spec.Manifest, error) {
 	}
 	if err := identifier(d.Application.ID, d.Application.Pos, "application ID"); err != nil {
 		return nil, err
+	}
+	if d.Application.Icon == "" {
+		return nil, bad(d.Application.Pos, "missing application icon")
+	}
+	if !iconRE.MatchString(d.Application.Icon) {
+		return nil, bad(d.Application.Pos, "invalid application icon %q (1-3 uppercase ASCII letters/digits)", d.Application.Icon)
 	}
 	if len(d.Screens) == 0 || len(d.Screens) > MaxScreens {
 		return nil, bad(d.Pos, "screens must contain 1..%d entries", MaxScreens)

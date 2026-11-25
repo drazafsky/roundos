@@ -1,6 +1,7 @@
 schema: roundos.rui/v1
 application:
   id: org.example.rui.demo
+  icon: RUI
 screens:
   - id: demo.root
     title: RUI Demo

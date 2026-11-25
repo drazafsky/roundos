@@ -55,6 +55,7 @@ integer epoch days**, not unquoted date strings.
 schema: roundos.rui/v1
 application:
   id: org.roundos.timer
+  icon: TMR
 screens:
   - id: timer.root
     title: Timer
@@ -72,6 +73,13 @@ screens:
 
 - `application.id`: trusted application identity; the future runtime must
   compare it to authenticated app identity/installed manifest.
+- `application.icon`: required static icon token of 1–3 uppercase ASCII letters
+  or digits, matching the format used in trusted installed-app manifests
+  (for example `CLK`, `TMR`, or `RUI`). Bindings, paths and embedded images are
+  not accepted. Declarations without an icon fail validation, including
+  programmatically constructed documents. Add the icon and recompile older
+  layouts and bundles with the current tooling. The installed manifest remains
+  the launcher's trusted icon source; built-in apps use their themed symbols.
 - `screens`: 1 to 16 in declared order; **first** screen is root.
 - Each screen: stable `id` (up to 64 ASCII bytes), `title` (string or string
   binding), template `layout`, optional `subtitle`, and one or more `groups`.

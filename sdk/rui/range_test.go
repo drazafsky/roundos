@@ -16,6 +16,7 @@ import (
 const boundRangeLayout = `schema: roundos.rui/v1
 application:
   id: example.ranges
+  icon: RUI
 screens:
   - id: root
     title: { bind: title }

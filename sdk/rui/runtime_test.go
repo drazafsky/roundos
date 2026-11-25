@@ -437,7 +437,7 @@ func TestRuntimeRejectsOversizeV7View(t *testing.T) {
 	// Every individual widget respects M1 limits, but aggregate bound strings
 	// must still respect the wire's 64 KiB frame. Build a valid bounded YAML.
 	var src strings.Builder
-	src.WriteString("schema: roundos.rui/v1\napplication:\n  id: org.example.large\nscreens:\n")
+	src.WriteString("schema: roundos.rui/v1\napplication:\n  id: org.example.large\n  icon: RUI\nscreens:\n")
 	for i := 0; i < 16; i++ {
 		src.WriteString(fmt.Sprintf("  - id: large.screen%d\n    title: Large\n    layout: list\n    groups:\n      - id: one\n        widgets:\n", i))
 		for j := 0; j < 30; j++ {

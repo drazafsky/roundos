@@ -18,7 +18,7 @@ func (discardReloadView) Publish(ui.View) error { return nil }
 // scale with their combined size, rather than rebuilding the tree per dialog.
 func BenchmarkReplacementManyDialogs(b *testing.B) {
 	var source strings.Builder
-	source.WriteString("schema: roundos.rui/v1\napplication:\n  id: org.example.load\nscreens:\n")
+	source.WriteString("schema: roundos.rui/v1\napplication:\n  id: org.example.load\n  icon: RUI\nscreens:\n")
 	for screen := 0; screen < 4; screen++ {
 		fmt.Fprintf(&source, "  - id: screen%d\n    title: Load\n    layout: list\n    groups:\n      - id: items\n        widgets:\n", screen)
 		for widget := 0; widget < 64; widget++ {

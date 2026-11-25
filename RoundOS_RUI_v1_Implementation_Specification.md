@@ -141,6 +141,7 @@ Required `id` and `type`; optional `label`, `detail`, `variant`, `enabledWhen`, 
 schema: roundos.rui/v1
 application:
   id: org.roundos.timer
+  icon: TMR
 screens:
   - id: timer.root
     title: Timer

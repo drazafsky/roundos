@@ -179,8 +179,8 @@ func TestCarouselTouchLaunchWaitsForSlideAndLabelsAreInert(t *testing.T) {
 			t.Fatalf("informational label or empty space opened Diagnostics: %v", point)
 		}
 	}
-	if changed, _ := m.Tap(240, 411); !changed || m.Page != Diagnostics {
-		t.Fatal("Diagnostics button is no longer touch accessible")
+	if _, _ = m.Tap(240, 411); m.Page != Home {
+		t.Fatal("removed Diagnostics button still has a hidden Home target")
 	}
 	m.Select(Home)
 	m.Appearance.ReduceMotion = true

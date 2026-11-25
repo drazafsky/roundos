@@ -31,8 +31,9 @@ type Document struct {
 }
 
 type Application struct {
-	ID  string `json:"id"`
-	Pos Pos    `json:"pos"`
+	ID   string `json:"id"`
+	Icon string `json:"icon"`
+	Pos  Pos    `json:"pos"`
 }
 
 type Screen struct {

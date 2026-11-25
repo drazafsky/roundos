@@ -1,6 +1,7 @@
 schema: roundos.rui/v1
 application:
   id: org.roundos.clock
+  icon: CLK
 screens:
   - id: clock.root
     title: CLOCK

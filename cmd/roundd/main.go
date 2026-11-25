@@ -1043,6 +1043,7 @@ func main() {
 		case <-alarm:
 			now := time.Now()
 			changed := model.AdvanceKinetic(now)
+			changed = model.AdvanceCarousel(now) || changed
 			old := model.Page
 			for _, ev := range gestures.Tick(now) {
 				changed = handleGesture(ev) || changed
@@ -1094,8 +1095,13 @@ func updatesRefreshDue(page int, now, deadline time.Time) bool {
 
 func nextWake(m *shell.Model, now, updatesRefreshAt time.Time) time.Duration {
 	next := m.NextKineticWake(now)
+	if d := m.NextCarouselWake(now); d > 0 && (next == 0 || d < next) {
+		next = d
+	}
 	if m.Page == shell.Home {
-		next = now.Truncate(time.Minute).Add(time.Minute).Sub(now)
+		if d := now.Truncate(time.Minute).Add(time.Minute).Sub(now); next == 0 || d < next {
+			next = d
+		}
 	}
 	if m.Page == shell.UpdatesPage {
 		delay := max(time.Millisecond, updatesRefreshAt.Sub(now))

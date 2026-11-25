@@ -4,6 +4,7 @@ import (
 	"roundos/internal/appmgr"
 	"roundos/internal/wire"
 	"strings"
+	"time"
 )
 
 const extraPageBase = 1000
@@ -15,6 +16,7 @@ type AppCard struct {
 }
 
 func (m *Model) SetInstalledApps(specs []appmgr.AppSpec) {
+	m.carouselStarted = time.Time{}
 	m.AppCards = []AppCard{{Clock, wire.ClockID, "CLOCK", "CLK"}, {Timer, wire.TimerID, "TIMER", "TMR"}, {Settings, "", "SETTINGS", "CFG"}}
 	m.AppPages = map[string]int{wire.ClockID: Clock, wire.TimerID: Timer}
 	m.PageApps = map[int]string{Clock: wire.ClockID, Timer: wire.TimerID}

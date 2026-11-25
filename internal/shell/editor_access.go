@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"strings"
+	"time"
 
 	"roundos/internal/appearance"
 	"roundos/internal/textedit"
@@ -108,6 +109,9 @@ func (m *Model) SetAppearance(s appearance.Settings) bool {
 		return false
 	}
 	m.Appearance = s
+	if s.ReduceMotion || !s.CarouselWrap {
+		m.carouselStarted = time.Time{}
+	}
 	m.ReflowReleaseNotes()
 	m.AppearanceDirty = true
 	return true
@@ -123,6 +127,8 @@ func (m *Model) ChangeAppearance(row int) bool {
 		s.ReduceMotion = !s.ReduceMotion
 	case 3:
 		s.LargeTargets = !s.LargeTargets
+	case 4:
+		s.CarouselWrap = !s.CarouselWrap
 	default:
 		return false
 	}
@@ -142,7 +148,7 @@ func (m *Model) TapSupplement(x, y int) (bool, string) {
 		return m.editorTap(x, y), ""
 	case Accessibility:
 		start, rows, rowY, step, height := accessGeometry(m)
-		for i := start; i < 4 && i < start+rows; i++ {
+		for i := start; i < 5 && i < start+rows; i++ {
 			top := rowY + (i-start)*step
 			if y >= top && y < top+height && x >= 91 && x < 389 {
 				m.AccessFocus = i
@@ -272,7 +278,7 @@ func (m *Model) RotateSupplement(delta int) (bool, string, int) {
 		}
 		return true, "", 0
 	case Accessibility:
-		m.AccessFocus = max(0, min(3, m.AccessFocus+delta))
+		m.AccessFocus = max(0, min(4, m.AccessFocus+delta))
 		return true, "", 0
 	case DiscardPrompt:
 		m.DiscardFocus = max(0, min(1, m.DiscardFocus+delta))
@@ -391,8 +397,8 @@ func (m *Model) DrawSupplement(im *image.RGBA) {
 	case Accessibility:
 		text(im, 240, 94, 3, "ACCESSIBILITY", accent, true)
 		text(im, 118, 116, 2, "<", fg, true)
-		values := []string{strings.ToUpper(m.Appearance.Theme), fmt.Sprintf("%d%%", m.Appearance.TextScale), boolWord(m.Appearance.ReduceMotion), boolWord(m.Appearance.LargeTargets)}
-		labels := []string{"THEME", "TEXT SCALE", "REDUCE MOTION", "LARGE TARGETS"}
+		values := []string{strings.ToUpper(m.Appearance.Theme), fmt.Sprintf("%d%%", m.Appearance.TextScale), boolWord(m.Appearance.ReduceMotion), boolWord(m.Appearance.LargeTargets), boolWord(m.Appearance.CarouselWrap)}
+		labels := []string{"THEME", "TEXT SCALE", "REDUCE MOTION", "LARGE TARGETS", "WRAP APPS"}
 		start, visible, top, step, height := accessGeometry(m)
 		for i := start; i < len(labels) && i < start+visible; i++ {
 			y := top + (i-start)*step

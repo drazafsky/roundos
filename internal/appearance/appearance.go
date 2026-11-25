@@ -21,9 +21,10 @@ type Settings struct {
 	TextScale    int    `json:"text_scale"`
 	ReduceMotion bool   `json:"reduce_motion"`
 	LargeTargets bool   `json:"large_targets"`
+	CarouselWrap bool   `json:"carousel_wrap"`
 }
 
-func Default() Settings { return Settings{Theme: Dark, TextScale: 100} }
+func Default() Settings { return Settings{Theme: Dark, TextScale: 100, CarouselWrap: true} }
 func (s Settings) Valid() error {
 	if s.Theme != Dark && s.Theme != Light && s.Theme != Contrast {
 		return errors.New("invalid theme")

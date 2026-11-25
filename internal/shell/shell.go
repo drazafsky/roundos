@@ -31,6 +31,9 @@ type Model struct {
 	Page                    int
 	Selected                int
 	AppCards                []AppCard
+	carouselFrom            float64
+	carouselTarget          float64
+	carouselStarted         time.Time
 	AppPages                map[string]int
 	PageApps                map[int]string
 	WiFi                    WiFiState
@@ -202,6 +205,7 @@ func (m *Model) Select(page int) bool {
 		}
 	}
 	if page != m.Page {
+		m.carouselStarted = time.Time{}
 		m.cancelPicker()
 		m.StopKinetic()
 		m.cancelWidgetEdit()
@@ -371,9 +375,9 @@ func (m *Model) Tap(x, y int) (bool, string) {
 		}
 		if y > 165 && y < 340 {
 			if x < 123 {
-				m.Selected = (m.Selected + m.CarouselCount() - 1) % m.CarouselCount()
+				return m.moveCarousel(-1, time.Now()), ""
 			} else if x > 357 {
-				m.Selected = (m.Selected + 1) % m.CarouselCount()
+				return m.moveCarousel(1, time.Now()), ""
 			} else {
 				m.Press()
 			}
@@ -445,8 +449,7 @@ func (m *Model) Rotate(delta int) (bool, string, int) {
 		return true, "", 0
 	}
 	if m.Page == Home {
-		m.Selected = (m.Selected + delta%m.CarouselCount() + m.CarouselCount()) % m.CarouselCount()
-		return true, "", 0
+		return m.moveCarousel(delta, time.Now()), "", 0
 	}
 	if m.hasWidgets(m.Page) {
 		return m.WidgetRotate(delta), "", 0

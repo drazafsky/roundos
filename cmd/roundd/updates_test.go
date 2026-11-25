@@ -34,3 +34,18 @@ func TestUpdatesRefreshDeadlineSurvivesFrequentEvents(t *testing.T) {
 		t.Fatalf("Updates refresh remained active after leaving the page: %v", next)
 	}
 }
+
+func TestCarouselFramesTakePriorityOverHomeMinuteRefresh(t *testing.T) {
+	m := shell.New()
+	m.Rotate(1)
+	now := time.Now()
+	if wake := nextWake(m, now, time.Time{}); wake <= 0 || wake > 20*time.Millisecond {
+		t.Fatalf("Home clock postponed the animation frame: %v", wake)
+	}
+	end := now.Add(time.Second)
+	m.AdvanceCarousel(end)
+	want := end.Truncate(time.Minute).Add(time.Minute).Sub(end)
+	if wake := nextWake(m, end, time.Time{}); wake != want {
+		t.Fatalf("idle Home still schedules animation frames: %v", wake)
+	}
+}

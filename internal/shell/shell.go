@@ -370,10 +370,6 @@ func (m *Model) Tap(x, y int) (bool, string) {
 		return m.WidgetTap(x, y)
 	}
 	if m.Page == Home {
-		if x >= 154 && x < 326 && y >= 390 && y < 432 {
-			m.Select(Diagnostics)
-			return true, ""
-		}
 		if y > 165 && y < 340 {
 			if x < 123 {
 				return m.moveCarousel(-1, time.Now()), ""

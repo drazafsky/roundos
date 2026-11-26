@@ -83,5 +83,5 @@ def referenced_numbers(repository, description):
     # was also linked in the sidebar. Accept local mentions and issue URLs.
     repo = re.escape(repository)
     body = description_prose(description)
-    pattern = rf'(?:https://github\.com/{repo}/issues/|(?<![\w/#-])(?:{repo})?#)([1-9][0-9]*)\b'
+    pattern = rf'(?:https://github\.com/{repo}/issues/|(?<![\w/#-])(?:(?:{repo})?#|GH-))([1-9][0-9]*)\b'
     return {int(value) for value in re.findall(pattern, body, re.I)}

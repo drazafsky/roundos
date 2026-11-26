@@ -61,8 +61,9 @@ and one pending label (`review:closeout`). Each run archives the PR description,
 review summaries and reviewed SHAs, inline comments and replies, thread
 resolution states, and PR conversation in its evidence artifact. Multiple
 closed issues can point to the same record. A closed issue with no linked merged
-PR has no review to assess. For a missed event or failed run, use
-`gh workflow run review-closeout.yml -f issue=ISSUE` on the default branch.
+PR has no review to assess. For a missed event or failed run, dispatch on the default branch with
+`gh workflow run review-closeout.yml -f pr=PR` for a merged PR, or
+`gh workflow run review-closeout.yml -f issue=ISSUE` for a closed issue.
 
 1. After merge, inspect the bot's closeout. If collection is still running,
    wait for it; a later issue-start also surfaces queued work. Retrieve all

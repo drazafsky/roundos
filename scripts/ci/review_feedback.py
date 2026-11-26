@@ -136,6 +136,7 @@ def save_record(github, evidence, existing):
         github.api(f"issues/comments/{existing['id']}", '--method', 'PATCH', '-f', f'body={body}')
     # The assessment survives label removal and makes replay safe after a partial write.
     assessed = any(c.get('author_association') in {'OWNER', 'MEMBER', 'COLLABORATOR'}
+                   and c['created_at'] >= evidence['merged_at']
                    and (c.get('body') or '').splitlines()[:1] == ['## Closeout assessment']
                    for c in evidence['conversation'])
     if PENDING in evidence['labels'] or assessed:

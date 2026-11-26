@@ -25,7 +25,7 @@ class CloseoutTests(unittest.TestCase):
         pages = [
             issue_page([pr, dict(pr, merged=False, number=11)], True),
             issue_page([pr, dict(pr, number=12, repository={'nameWithOwner': 'other/repo'})], False)]
-        references = [dict(pr, number=3, body='Refs #1'), dict(pr, number=4, body='Example: `#1`')]
+        references = [dict(pr, number=3, body='Refs GH-1'), dict(pr, number=4, body='Example: `#1`')]
         github.repo_graphql.side_effect = pages + [{'issue': {'state': 'CLOSED', 'timelineItems': {
             'nodes': [{'source': ref} for ref in references], 'pageInfo': {'hasNextPage': False}}}}]
         self.assertEqual(feedback.closing_prs(github, 1), [3, 9])
@@ -61,7 +61,7 @@ class CloseoutTests(unittest.TestCase):
 
     def test_repeat_collection_keeps_one_record_and_preserves_assessed_queue_state(self):
         github = mock.Mock()
-        evidence = dict(pr=1, url='pr', head='abc', reviews=[], threads=[], conversation=[], labels=[])
+        evidence = dict(pr=1, url='pr', head='abc', merged_at='2026-11-25T02:00:00Z', reviews=[], threads=[], conversation=[], labels=[])
         body = feedback.record_body(evidence)
         github.api.side_effect = [{}, None, {}, {}]
         feedback.save_record(github, evidence, None)
@@ -73,7 +73,11 @@ class CloseoutTests(unittest.TestCase):
         self.assertEqual(github.api.call_args.args[0], 'issues/1/labels')
         github.api.reset_mock()
         evidence['conversation'] = [dict(body='## Closeout assessment\nExisting test covers the finding.',
-                                         author_association='OWNER')]
+                                         author_association='OWNER', created_at='2026-11-25T01:00:00Z')]
+        feedback.save_record(github, evidence, dict(body=body, id=9))
+        self.assertEqual(github.api.call_args.args[0], 'issues/1/labels')
+        github.api.reset_mock()
+        evidence['conversation'][0]['created_at'] = '2026-11-25T03:00:00Z'
         feedback.save_record(github, evidence, dict(body=body, id=9))
         github.api.assert_not_called()
         feedback.save_record(github, evidence, dict(body='older record', id=9))

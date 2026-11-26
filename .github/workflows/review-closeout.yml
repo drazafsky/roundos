@@ -11,7 +11,11 @@ on:
     inputs:
       issue:
         description: Closed issue number to reconcile
-        required: true
+        required: false
+        type: string
+      pr:
+        description: Merged PR number to reconcile directly (supply either pr or issue)
+        required: false
         type: string
 
 permissions:
@@ -32,11 +36,13 @@ jobs:
           persist-credentials: false
       - id: links
         env:
-          MERGED_PR: ${{ github.event.pull_request.number }}
+          MERGED_PR: ${{ github.event.pull_request.number || inputs.pr }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -n "$MERGED_PR" ]; then
+            [ -z "$ISSUE_NUMBER" ]
+            [[ "$MERGED_PR" =~ ^[1-9][0-9]*$ ]]
             prs="[$MERGED_PR]"
           else
             prs=$(python3 scripts/ci/review_feedback.py closing-prs "$ISSUE_NUMBER")

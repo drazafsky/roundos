@@ -87,7 +87,8 @@ def pr_report(github, number, *, feedback=False):
     if pr['mergeStateStatus'] != 'CLEAN':
         blockers.append(f'GitHub merge state: {pr["mergeStateStatus"]}')
     reviews = list(github.pages(f'pulls/{number}/reviews'))
-    outcomes = {review_kind(review) for review in reviews if review.get('commit_id') == sha}
+    outcomes = {review_kind(review) for review in reviews
+                if review.get('commit_id') == sha and review['state'] != 'DISMISSED'}
     if 'substantive' not in outcomes:
         if 'quota' in outcomes:
             blockers.append('Copilot review could not finish. Retry after quota is available.')

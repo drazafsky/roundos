@@ -54,7 +54,8 @@ Applies to: touch, keyboard, carousel, focus, glyph, launcher, control, gesture,
 
 ## After closure
 
-The **Collect review closeout** Action finds same-repository merged PRs that close the issue or
+The **Collect review closeout** Action records each PR merged into main.
+When an issue closes it also finds same-repository merged PRs that close the issue or
 cross-reference it from their description. Each PR gets one bot comment indexing review outcomes
 and one pending label (`review:closeout`). Each run archives the PR description,
 review summaries and reviewed SHAs, inline comments and replies, thread

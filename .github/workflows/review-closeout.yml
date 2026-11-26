@@ -3,6 +3,10 @@ name: Collect review closeout
 on:
   issues:
     types: [closed]
+  # Use trusted main code even when the merged PR originated in a fork.
+  pull_request_target:
+    types: [closed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       issue:
@@ -17,6 +21,7 @@ permissions:
 
 jobs:
   discover:
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.merged
     runs-on: ubuntu-24.04
     outputs:
       prs: ${{ steps.links.outputs.prs }}
@@ -27,10 +32,15 @@ jobs:
           persist-credentials: false
       - id: links
         env:
+          MERGED_PR: ${{ github.event.pull_request.number }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          prs=$(python3 scripts/ci/review_feedback.py closing-prs "$ISSUE_NUMBER")
+          if [ -n "$MERGED_PR" ]; then
+            prs="[$MERGED_PR]"
+          else
+            prs=$(python3 scripts/ci/review_feedback.py closing-prs "$ISSUE_NUMBER")
+          fi
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
 
   record:

@@ -41,11 +41,12 @@ THREADS = '''query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
 def review_kind(review):
     """Classify submitted Copilot reviews; other authors and pending reviews are irrelevant."""
     if ((review.get('user') or {}).get('login') not in COPILOT or not review.get('submitted_at')
-            or review['state'] not in {'APPROVED', 'COMMENTED', 'CHANGES_REQUESTED'}):
+            or review['state'] not in {'APPROVED', 'COMMENTED', 'CHANGES_REQUESTED', 'DISMISSED'}):
         return None
     # Look only at the overview before its file summaries, which can quote arbitrary code.
     summary = (review.get('body') or '').partition('<details')[0].lower()
-    unable = re.search(r"^copilot (?:encountered an error and )?(?:was unable to|could not|couldn't) review\b", summary, re.M)
+    unable = re.search(r"^copilot (?:encountered an error and )?(?:was unable to|wasn't able to|was not able to|could not|couldn't) review\b",
+                       summary.replace('’', "'"), re.M)
     if unable:
         return 'quota' if 'quota' in summary else 'incomplete'
     if re.search(r'^(?:one or more reviewer sessions failed|(?:the |a )?review session failed)\b', summary, re.M):

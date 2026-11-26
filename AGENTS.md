@@ -21,7 +21,11 @@ configuration, and maintenance.
 4. **Review code changes before creating a GitHub PR.** Use the `/review` skill
    on the complete code diff intended for the PR. Address its actionable findings
    and complete the review before creating the PR in GitHub. This review is in
-   addition to the required GitHub Copilot review.
+   addition to the required GitHub Copilot review. At issue start and again
+   against the final diff, use the applicable questions in the
+   [pre-PR review playbook](docs/PRE-PR-REVIEW.md). Record the failure scenario,
+   verification and locally caught defects in the initial PR description.
+   Batch related fixes and check sibling paths before requesting another review.
 
 5. **Every PR requires a completed GitHub Copilot review.** Request Copilot as a
    reviewer and wait for its submitted review before merging. A pending review
@@ -67,6 +71,12 @@ configuration, and maintenance.
     own status does not occupy a child slot, and nested parents each have
     their own direct-child limit. See [issue work limits](docs/CI-RELEASES.md#issue-work-limits)
     for locking, permissions, and recovery.
+
+12. **Learn from closed issues.** After merge, assess the PR's review closeout
+    using the [playbook](docs/PRE-PR-REVIEW.md). On issue start, process a queued
+    closeout if one is shown. Link confirmed misses to the earliest affected
+    commit and a concrete prevention check. Incorporate reusable improvements
+    through the normal issue and PR workflow.
 
 Use the repository scripts below for routine GitHub work. Run them from the
 repository root with Python 3 and an authenticated `gh` CLI.

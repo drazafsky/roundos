@@ -9,46 +9,19 @@ import subprocess
 import sys
 import time
 
-from workflow_github import GitHub, REPO, ToolError, gh, positive
+from review_feedback import review_kind, review_threads, start_handoff
+from workflow_github import GitHub, REPO, ToolError, gh, positive, referenced_numbers
 
 PR_FIELDS = 'state,isDraft,body,headRefOid,mergeStateStatus,assignees,statusCheckRollup'
-COPILOT = {'copilot-pull-request-reviewer', 'copilot-pull-request-reviewer[bot]'}
 CI_JOBS = {'Tests', 'Host DRM build', 'ARMv7 build and package'}
-THREAD_QUERY = '''query($owner:String!,$name:String!,$number:Int!,$cursor:String) {
-  repository(owner:$owner,name:$name) { pullRequest(number:$number) {
-    reviewThreads(first:100,after:$cursor) { nodes { isResolved comments(first:1) { nodes { url } } }
-      pageInfo { hasNextPage endCursor } }
-  } }
-}'''
 
 
 def pr_data(github, number):
     return json.loads(gh('pr', 'view', str(number), '--repo', github.repo, '--json', PR_FIELDS))
 
 
-def description_prose(body):
-    fence = None
-    lines = []
-    for line in re.sub(r'<!--.*?-->', '', body or '', flags=re.S).splitlines():
-        if fence:
-            if re.fullmatch(r' {0,3}' + re.escape(fence[0]) + '{' + str(len(fence)) + r',}[ \t]*', line):
-                fence = None
-            continue
-        match = re.match(r'^ {0,3}(`{3,}(?!`)[^`]*$|~{3,})', line)
-        if match:
-            fence = re.match(r'`+|~+', match[1])[0]
-        else:
-            lines.append(line)
-    return re.sub(r'(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)', '', '\n'.join(lines))
-
-
 def tracked_issues(github, pr):
-    # The rules require a reference in the description, even if the issue
-    # was also linked in the sidebar. Accept local mentions and issue URLs.
-    repo = re.escape(github.repo)
-    body = description_prose(pr['body'])
-    pattern = rf'(?:https://github\.com/{repo}/issues/|(?<![\w/#-])(?:{repo})?#)([1-9][0-9]*)\b'
-    numbers = {int(value) for value in re.findall(pattern, body, re.I)}
+    numbers = referenced_numbers(github.repo, pr['body'])
     issues = []
     for number in sorted(numbers):
         issue = github.api(f'issues/{number}', missing_ok=True)
@@ -71,17 +44,6 @@ def linked_assignees(pr, issues):
     elif expected != actual:
         problems.append(f'PR assignees must match #{first["number"]}: {", ".join(sorted(expected))}')
     return problems
-
-
-def review_threads(github, number):
-    args = {'number': number}
-    for _ in range(30):
-        threads = github.repo_graphql(THREAD_QUERY, **args)['pullRequest']['reviewThreads']
-        yield from threads['nodes']
-        if not threads['pageInfo']['hasNextPage']:
-            return
-        args['cursor'] = threads['pageInfo']['endCursor']
-    raise ToolError('Too many review threads to verify completely')
 
 
 def run_blockers(github, sha, checks):
@@ -125,10 +87,14 @@ def pr_report(github, number, *, feedback=False):
     if pr['mergeStateStatus'] != 'CLEAN':
         blockers.append(f'GitHub merge state: {pr["mergeStateStatus"]}')
     reviews = list(github.pages(f'pulls/{number}/reviews'))
-    if not any((review.get('user') or {}).get('login') in COPILOT and review.get('commit_id') == sha
-               and review.get('submitted_at') and review['state'] in {'APPROVED', 'COMMENTED', 'CHANGES_REQUESTED'}
-               for review in reviews):
-        blockers.append('Copilot has not submitted a review for this commit')
+    outcomes = {review_kind(review) for review in reviews if review.get('commit_id') == sha}
+    if 'substantive' not in outcomes:
+        if 'quota' in outcomes:
+            blockers.append('Copilot review could not finish. Retry after quota is available.')
+        elif 'incomplete' in outcomes:
+            blockers.append('Copilot review session incomplete for this commit')
+        else:
+            blockers.append('Copilot has not submitted a review for this commit')
     threads = [node for node in review_threads(github, number) if not node['isResolved']]
     blockers.extend('Unresolved thread: ' + (thread['comments']['nodes'] or [{'url': '(link unavailable)'}])[0]['url']
                     for thread in threads)
@@ -341,6 +307,11 @@ def main():
                 raise ToolError('; '.join(blockers))
             issues = [issue for issue in issues if issue['state'] == 'open']
         project_status(github, issues, args.target, project_name=args.project, apply=args.apply)
+        if args.command == 'issue-start':
+            try:
+                start_handoff(github, issue)
+            except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+                print(f'Review handoff unavailable ({error}). See docs/PRE-PR-REVIEW.md.', file=sys.stderr)
         return 0
     except (ValueError, OSError, subprocess.TimeoutExpired) as error:
         print(error, file=sys.stderr)

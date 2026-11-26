@@ -60,3 +60,28 @@ def positive(value):
     if number <= 0:
         raise ValueError('Expected a positive number')
     return number
+
+
+def description_prose(body):
+    fence = None
+    lines = []
+    for line in re.sub(r'<!--.*?-->', '', body or '', flags=re.S).splitlines():
+        if fence:
+            if re.fullmatch(r' {0,3}' + re.escape(fence[0]) + '{' + str(len(fence)) + r',}[ \t]*', line):
+                fence = None
+            continue
+        match = re.match(r'^ {0,3}(`{3,}(?!`)[^`]*$|~{3,})', line)
+        if match:
+            fence = re.match(r'`+|~+', match[1])[0]
+        else:
+            lines.append(line)
+    return re.sub(r'(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)', '', '\n'.join(lines))
+
+
+def referenced_numbers(repository, description):
+    # The rules require a reference in the description, even if the issue
+    # was also linked in the sidebar. Accept local mentions and issue URLs.
+    repo = re.escape(repository)
+    body = description_prose(description)
+    pattern = rf'(?:https://github\.com/{repo}/issues/|(?<![\w/#-])(?:{repo})?#)([1-9][0-9]*)\b'
+    return {int(value) for value in re.findall(pattern, body, re.I)}

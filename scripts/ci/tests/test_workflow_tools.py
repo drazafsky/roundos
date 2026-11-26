@@ -58,6 +58,12 @@ class GitHubToolTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn('Copilot has not submitted a review for this commit', lines)
             review['commit_id'] = sha
+            for notice in ('Copilot was unable to review this pull request due to insufficient remaining quota.',
+                           'One or more reviewer sessions failed, leaving the review evidence incomplete.',
+                           'Copilot encountered an error and was unable to review this pull request.'):
+                review['body'] = notice
+                self.assertFalse(tools.pr_report(github, 7)[0])
+            review['body'] = 'Check edge cases'
             ok, lines, details = tools.pr_report(github, 7, feedback=True)
             self.assertTrue(ok)
             self.assertIn('GitHub checks passed', lines)

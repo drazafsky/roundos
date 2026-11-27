@@ -11,7 +11,7 @@ Candidate source targeting the Raspberry Pi Zero 2 W and Pimoroni HyperPixel 2.1
 
 ## Build and install (SSH only)
 
-Use the exact verified ARMv7 candidate package linked from its acceptance record and follow [CI package installation](docs/CI-RELEASES.md#installing-on-a-32-bit-pi). For a native source build, run `go test ./...` and `sh scripts/build.sh`, then review `sudo ./scripts/install-release.sh` before installation. Preserve the package's complete version and commit identity in the acceptance record.
+Use the exact verified ARMv7 candidate package linked from its acceptance record and follow [CI package installation](docs/CI-RELEASES.md#installing-on-a-32-bit-pi). For a native build from a source checkout of the recorded commit, run `go test ./...` and `sh scripts/build.sh`, then review `sudo ./scripts/install-release.sh` before installation. Set `ROUNDOS_VERSION` and `ROUNDOS_BUILD_ID` to the recorded candidate version and full commit when building for acceptance. Preserve the package's complete version and commit identity in the acceptance record.
 
 **Installation does not stop LightDM or enable the boot service.** Review [0.7.0 candidate notes](docs/RELEASE-0.7.0.md), the [managed installation background](docs/RELEASE-0.5.0.md) and [recovery guide](docs/SYSTEMD-ROLLBACK.md). To try the managed boot path, over an SSH session execute:
 
@@ -21,13 +21,13 @@ sudo roundosctl activate
 
 This explicitly switches from LightDM to the RoundOS service and enables it on boot. Verify touchscreen/rotary/Wi-Fi first, then reboot to check automatic startup. Use `sudo roundosctl disable` to restore the prior desktop state. `sudo roundosctl rollback` restores a previous **managed** release, if one exists; otherwise it disables RoundOS and restores the desktop so the earlier standalone RC4 launcher can be run manually.
 
-For manual SSH-console testing, follow the candidate/recovery guide to stop the managed display session before running the verified candidate's `./scripts/test-drm.sh`. A systemd service has **no interactive stdin**, so SSH `l/r/p/s/q` commands are available only in a manual test session, not to the auto-started service.
+Manual SSH-console testing requires a source checkout of the recorded candidate commit, including `scripts/test-drm.sh` and `scripts/install-app-binaries.sh`, with matching verified `roundd`, `round-clock` and `round-timer` binaries copied from the candidate package or built with its recorded identity. Follow the candidate/recovery guide to stop the managed display session, then run `./scripts/test-drm.sh` from that checkout. Use the managed installation instructions above when working from the binary ARMv7 package. A systemd service has **no interactive stdin**, so SSH `l/r/p/s/q` commands are available only in a manual test session, not to the auto-started service.
 
 ## Hardware and performance options
 
 The managed service defaults to the physical touchscreen and the verified unmirrored-Y, two-contact gestures. Optional rotary device paths and backlight settings may be configured by a root-owned `/etc/roundos/device.env` (see release docs); no Wi-Fi passwords or other secrets belong in that file. Shell settings are under `/var/lib/roundos/shell-data`, app state under `/var/lib/roundos/app-data`, trusted manifests in `/etc/roundos/apps`, and remembered Wi-Fi credentials continue to be managed by NetworkManager.
 
-To record host CPU, RSS and thermal data while RoundOS is running:
+To record host CPU, RSS and thermal data while RoundOS is running, run the following helper from a source checkout of the recorded candidate commit:
 
 ```sh
 python3 scripts/collect-baseline.py --seconds 60 --output /tmp/roundos-idle.jsonl

@@ -28,8 +28,11 @@ sudo roundosctl status
 sudo roundosctl verify
 sudo systemctl status roundos.service --no-pager
 sudo journalctl -u roundos.service -n 100 --no-pager
-./scripts/verify-app-privileges.sh
 ```
+
+For the additional app-privilege check, run `./scripts/verify-app-privileges.sh`
+from a source checkout matching the installed candidate commit. This developer
+helper is separate from the installation/recovery scripts in the ARMv7 package.
 
 Check missing libdrm/KMS device, incorrect `DPI-1` connector, unreachable encoder device, corrupted `/etc/roundos/gestures.json`, invalid untrusted optional manifests, or absent/misowned `/var/lib/roundos/app-data`. Display driver, overlay and touch configuration are not changed by this installer. **Never** fix an app start failure by running third-party apps as root.
 
